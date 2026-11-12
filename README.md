@@ -55,6 +55,26 @@ Build note for this nix-based machine: the opencv crate needs the
 `LIBCLANG_PATH=<nix clang-lib>/lib` and `LD_LIBRARY_PATH=<same>` (see
 Cargo.toml comments).
 
+## Milestone 3: compositing — background blur & replace
+
+Turns the segmentation mask into real filters in the virtual camera feed,
+with temporal smoothing (EMA on the mask, `--mask-smoothing`, default 0.6)
+and feathered mask edges:
+
+```sh
+./target/release/easyfilters --mode blur                          # background Gaussian-blurred
+./target/release/easyfilters --mode blur --blur-strength 25        # stronger blur (sigma at 720p)
+./target/release/easyfilters --mode replace                       # background = generated gradient
+./target/release/easyfilters --mode replace --background ~/Pictures/bg.jpg
+./target/release/easyfilters --self-test frame.jpg                 # also writes blur.png + replace.png
+```
+
+Measured on this machine at 1280x720@30 MJPG in a quiet window: 29.8 fps,
+0 drops, decode ~2.5 ms / infer ~6 ms / composite ~4.5 ms / encode ~1.7 ms
+per frame, single-threaded (release build). The camera input itself
+fluctuates between ~15 and 30 fps with system load; the app tracks the input
+with 0 drops either way.
+
 ## Tests
 
 Unit tests use Rust's built-in test harness — no external framework needed:

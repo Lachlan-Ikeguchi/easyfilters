@@ -38,6 +38,33 @@ pub fn resize(src: &Mat, w: u32, h: u32) -> Result<Mat> {
     Ok(dst)
 }
 
+/// Gaussian blur with a kernel size derived from `sigma` (odd, >= 3).
+pub fn gaussian_blur(src: &Mat, sigma: f64) -> Result<Mat> {
+    let k = ((sigma * 6.0).ceil() as i32).max(3) | 1;
+    let mut dst = Mat::default();
+    imgproc::gaussian_blur(
+        src,
+        &mut dst,
+        Size::new(k, k),
+        sigma,
+        sigma,
+        opencv::core::BORDER_DEFAULT,
+        AlgorithmHint::ALGO_HINT_DEFAULT,
+    )?;
+    Ok(dst)
+}
+
+/// Load an image file (png/jpg/...) as BGR.
+pub fn load_image(path: &std::path::Path) -> Result<Mat> {
+    let p = path.to_str().context("non-UTF-8 image path")?;
+    let img = imgcodecs::imread(p, imgcodecs::IMREAD_COLOR)
+        .with_context(|| format!("imread {}", path.display()))?;
+    if img.empty() {
+        bail!("imread returned an empty image for {}", path.display());
+    }
+    Ok(img)
+}
+
 /// Build an 8UC1 Mat (rows x cols, row-major) from a raw mask buffer.
 pub fn mask_mat(data: &[u8], cols: u32, rows: u32) -> Result<Mat> {
     let mut m = Mat::new_rows_cols_with_default(

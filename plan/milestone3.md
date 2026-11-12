@@ -138,3 +138,48 @@ in release, single-threaded).
   `--release`.
 - Flatpak restart-after-start caveat applies as in M1/M2 — README note
   already covers it.
+
+## Implementation findings (2026-11-12, verified live)
+
+- **Composite must stay in 8-bit.** First implementation blended in f32
+  (convert_to CV_32F, multiply/add): composite_ms ~27-29 at 720p, which
+  alone blows the 33 ms frame budget. Rewritten as 8U scaled multiply —
+  `out = saturate(frame*mask/255) + saturate(layer*(255-mask)/255)` with
+  `core::multiply(..., 1.0/255.0, ...)` + `core::add` and `bitwise_not` for
+  the inverse mask: **composite_ms 4.4-6.1 at 1280x720**. Mask is feathered
+  as 8U too (Gaussian sigma 1.5 at model res, then linear upscale).
+- **Blur runs on a 1/4-resolution layer** (`BLUR_DOWNSAMPLE=4`, sigma
+  divided by 4) — visually indistinguishable for a background and ~1 ms;
+  person is composited sharp on top. Chosen over full-res blur from the
+  start for budget safety.
+- **`--blur-strength` is expressed at 720p and scaled by actual height**
+  (default 15). `--mode replace` loads `--background` once and stretches
+  it to frame size; without `--background` a vertical dark gradient is
+  generated (`composite::default_background`).
+- **EMA smoother** (`MaskSmoother`, f32 state at 144x256, α default 0.6 via
+  `--mask-smoothing`) updates per frame; blur/replace use the soft mask,
+  overlay/mask keep the raw hard mask (M2 behavior + flicker reference).
+  `--self-test` uses α=1.0 so a single frame settles the state; it now also
+  writes `blur.png` / `replace.png`. Self-test on a 640x480 camera frame:
+  coverage 18.0%, infer 7.6 ms; artifacts eyeballed — person sharp,
+  background blurred/replaced, feathered edge.
+- **Live on /dev/video0 @ 1280x720 MJPG:** `--mode blur` read back via
+  `scripts/debug_camera.py` + `ffmpeg` (valid JPEG, visibly blurred);
+  `--mode replace --background /tmp/frame.jpg` read back the same way
+  (person sharp over the background photo). Clean-window stats:
+  **29.77 fps, 0 drops**, decode ~2.5 / infer ~6.2 / composite ~4.4 /
+  encode ~1.7 ms — the M2 bar (29.8 fps) is met with compositing on.
+  Note: the camera itself fluctuates between ~15 and 30 fps depending on
+  system load (measured raw with debug_camera.py); the app tracks the input
+  rate with 0 drops and per-frame processing (~17 ms at 720p) is well under
+  the 33 ms budget.
+- **Robustness fix found live:** the first frame after a stream restart can
+  be undecodable and `imdecode` failure killed the whole app. Decode errors
+  now drop the frame with a `warn!` (drop-frame policy); verified by
+  stop/start cycles — app survives, 0 drops.
+- **opencv 0.102 API notes:** `imgproc::gaussian_blur` takes a 7th
+  `AlgorithmHint` arg and `BORDER_DEFAULT` lives in `opencv::core`, not
+  `imgproc`; `core::bitwise_not` for the inverse mask (avoids the
+  `Scalar`-as-`ToInputArray` question for `subtract`).
+- Regression: `--mode passthrough` / `overlay` / `mask` paths unchanged and
+  verified running; `--list` unchanged.

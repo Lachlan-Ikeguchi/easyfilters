@@ -1,7 +1,8 @@
-//! easyfilters — milestone 2: passthrough from the real camera to the
-//! v4l2loopback virtual camera, optionally with the ONNX person-segmentation
-//! mask rendered into the feed (--mode overlay|mask).
+//! easyfilters — milestone 3: passthrough from the real camera to the
+//! v4l2loopback virtual camera, with the ONNX person-segmentation mask used
+//! to composite real filters into the feed (--mode overlay|mask|blur|replace).
 
+mod composite;
 mod frame;
 mod segmentation;
 mod v4l2;
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use opencv::prelude::*;
-use tracing::info;
+use tracing::{info, warn};
 use v4l2r::ioctl::Capabilities;
 use v4l2r::{bindings, PixelFormat, QueueType};
 
@@ -36,19 +37,25 @@ enum Mode {
     Overlay,
     /// Pure grayscale person mask.
     Mask,
+    /// Person kept sharp, background Gaussian-blurred (--blur-strength).
+    Blur,
+    /// Person kept sharp, background replaced (--background image or a
+    /// default gradient).
+    Replace,
 }
 
 #[derive(Default)]
 struct StageTiming {
     decode: Duration,
     infer: Duration,
+    composite: Duration,
     encode: Duration,
 }
 
 #[derive(Parser)]
 #[command(
     name = "easyfilters",
-    about = "Virtual camera with background filters (milestone 2: segmentation mask preview)"
+    about = "Virtual camera with background filters (milestone 3: blur/replace compositing)"
 )]
 struct Args {
     /// Input camera device (default: auto-detect first uvcvideo capture node)
@@ -78,7 +85,16 @@ struct Args {
     /// ONNX segmentation model (default: bundled assets/ model, or $EASYFILTERS_MODEL)
     #[arg(long)]
     model: Option<PathBuf>,
-    /// Decode one image, run segmentation, write mask.png/overlay.png next to it, exit
+    /// Gaussian blur sigma for --mode blur, expressed at 720p (scaled with the actual height)
+    #[arg(long, default_value_t = 15.0)]
+    blur_strength: f64,
+    /// Background image for --mode replace (default: generated gradient)
+    #[arg(long)]
+    background: Option<PathBuf>,
+    /// EMA alpha for mask temporal smoothing, 0..1 (higher = smoother, more lag)
+    #[arg(long, default_value_t = 0.6)]
+    mask_smoothing: f32,
+    /// Decode one image, run segmentation, write mask.png/overlay.png/blur.png/replace.png next to it, exit
     #[arg(long)]
     self_test: Option<PathBuf>,
 }
@@ -88,6 +104,18 @@ fn model_path(args: &Args) -> PathBuf {
         .clone()
         .or_else(|| std::env::var("EASYFILTERS_MODEL").ok().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL))
+}
+
+/// Background for --mode replace: the --background image resized to the
+/// frame, or a generated gradient when no image is given.
+fn load_background(args: &Args, w: u32, h: u32) -> Result<opencv::core::Mat> {
+    match &args.background {
+        Some(p) => {
+            let img = frame::load_image(p)?;
+            frame::resize(&img, w, h)
+        }
+        None => composite::default_background(w, h),
+    }
 }
 
 /// Decode `path` (JPEG), run the segmenter, write mask.png / overlay.png
@@ -125,6 +153,21 @@ fn self_test(path: &Path, args: &Args) -> Result<()> {
     frame::write_image(&mask_path, &mask_img)?;
     frame::write_image(&overlay_path, &overlay)?;
     println!("wrote {} and {}", mask_path.display(), overlay_path.display());
+
+    // Milestone 3: blur / replace artifacts. A single frame has no history,
+    // so use alpha = 1.0 to settle the EMA state on this frame's mask.
+    let mut smoother = composite::MaskSmoother::new(MODEL_W * MODEL_H, 1.0);
+    let soft = smoother.update(&mask);
+    let mask_full_f = composite::feather_mask(soft, MODEL_W, MODEL_H, w, h)?;
+    let sigma = args.blur_strength * h as f64 / 720.0;
+    let blurred = composite::blur_and_composite(&img, &mask_full_f, sigma)?;
+    let bg = load_background(args, w, h)?;
+    let replaced = composite::replace_and_composite(&img, &bg, &mask_full_f)?;
+    let blur_path = dir.join("blur.png");
+    let replace_path = dir.join("replace.png");
+    frame::write_image(&blur_path, &blurred)?;
+    frame::write_image(&replace_path, &replaced)?;
+    println!("wrote {} and {}", blur_path.display(), replace_path.display());
     Ok(())
 }
 
@@ -332,6 +375,25 @@ fn run(args: Args) -> Result<()> {
         }
     };
 
+    let bg = match args.mode {
+        Mode::Replace => {
+            let b = load_background(&args, in_fmt.width, in_fmt.height)?;
+            info!(
+                background = %args
+                    .background
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<gradient>".to_string()),
+                "background ready"
+            );
+            Some(b)
+        }
+        _ => None,
+    };
+    let mut smoother = composite::MaskSmoother::new(MODEL_W * MODEL_H, args.mask_smoothing);
+    // --blur-strength is expressed at 720p; scale with the actual frame height.
+    let sigma = args.blur_strength * in_fmt.height as f64 / 720.0;
+
     let in_q = in_dev.queue(QueueType::VideoCapture, args.buffers)?;
     let mut out_q = out_dev.queue(QueueType::VideoOutput, args.buffers)?;
     info!(buffers = in_q.buffers.len(), "queues allocated");
@@ -382,7 +444,17 @@ fn run(args: Args) -> Result<()> {
                         }
                         (Some(seg), mode) => {
                             let t = Instant::now();
-                            let img = frame::decode_mjpg(src)?;
+                            let img = match frame::decode_mjpg(src) {
+                                Ok(img) => img,
+                                Err(e) => {
+                                    // A corrupt frame (e.g. right after a
+                                    // stream restart) must not kill the app.
+                                    warn!(error = %e, "dropping undecodable frame");
+                                    drops += 1;
+                                    in_q.qbuf(d.index, 0, now_timeval())?;
+                                    continue;
+                                }
+                            };
                             let decode = t.elapsed();
                             let t = Instant::now();
                             let small =
@@ -391,21 +463,66 @@ fn run(args: Args) -> Result<()> {
                             let mask = seg.mask(&rgb, MODEL_W, MODEL_H)?;
                             let infer = t.elapsed();
                             let t = Instant::now();
-                            let mask_small =
-                                frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
-                            let mask_full =
-                                frame::upscale_mask(&mask_small, in_fmt.width, in_fmt.height)?;
                             let out_img = match mode {
-                                Mode::Overlay => frame::render_overlay(&img, &mask_full)?,
-                                Mode::Mask => frame::render_mask(&mask_full)?,
+                                Mode::Overlay => {
+                                    let mask_small = frame::mask_mat(
+                                        &mask,
+                                        MODEL_W as u32,
+                                        MODEL_H as u32,
+                                    )?;
+                                    let mask_full = frame::upscale_mask(
+                                        &mask_small,
+                                        in_fmt.width,
+                                        in_fmt.height,
+                                    )?;
+                                    frame::render_overlay(&img, &mask_full)?
+                                }
+                                Mode::Mask => {
+                                    let mask_small = frame::mask_mat(
+                                        &mask,
+                                        MODEL_W as u32,
+                                        MODEL_H as u32,
+                                    )?;
+                                    let mask_full = frame::upscale_mask(
+                                        &mask_small,
+                                        in_fmt.width,
+                                        in_fmt.height,
+                                    )?;
+                                    frame::render_mask(&mask_full)?
+                                }
+                                Mode::Blur | Mode::Replace => {
+                                    let soft = smoother.update(&mask);
+                                    let mask_full = composite::feather_mask(
+                                        soft,
+                                        MODEL_W,
+                                        MODEL_H,
+                                        in_fmt.width,
+                                        in_fmt.height,
+                                    )?;
+                                    match mode {
+                                        Mode::Blur => composite::blur_and_composite(
+                                            &img,
+                                            &mask_full,
+                                            sigma,
+                                        )?,
+                                        Mode::Replace => composite::replace_and_composite(
+                                            &img,
+                                            bg.as_ref().unwrap(),
+                                            &mask_full,
+                                        )?,
+                                        _ => unreachable!(),
+                                    }
+                                }
                                 Mode::Passthrough => unreachable!(),
                             };
+                            let composite = t.elapsed();
+                            let t = Instant::now();
                             let jpeg = frame::encode_jpeg(&out_img, JPEG_QUALITY)?;
                             let dst = out_q.buffers[oidx].mapping.as_mut();
                             let n = jpeg.len().min(dst.len());
                             dst[..n].copy_from_slice(&jpeg[..n]);
                             let encode = t.elapsed();
-                            (n, StageTiming { decode, infer, encode })
+                            (n, StageTiming { decode, infer, composite, encode })
                         }
                         (None, _) => unreachable!(),
                     };
@@ -431,6 +548,7 @@ fn run(args: Args) -> Result<()> {
                 fps,
                 decode_ms = stage.decode.as_secs_f64() * 1000.0,
                 infer_ms = stage.infer.as_secs_f64() * 1000.0,
+                composite_ms = stage.composite.as_secs_f64() * 1000.0,
                 encode_ms = stage.encode.as_secs_f64() * 1000.0,
                 "stats"
             );
