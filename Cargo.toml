@@ -18,6 +18,8 @@ v4l2r = "0.0.7"
 #   LD_LIBRARY_PATH=<same>              (so the build script can dlopen it)
 # plus the crate's `clang-runtime` feature (bindgen's clang-sys/runtime is
 # unified on, so the binding generator must load libclang at runtime).
+# With the nix flake (nix develop / nix build) none of these exports are
+# needed: flake.nix sets them from nixpkgs' libclang/opencv4/linuxHeaders.
 tract-onnx = "0.23"
 opencv = { version = "0.102", features = ["clang-runtime"] }
 # Used by later milestones (GUI, tray, config). Still commented out: this

@@ -2,6 +2,33 @@
 
 A pipewire and openCV virtual camera app written in rust using the iced framework to apply filters to any software using the camera.
 
+## Build with nix
+
+This repo is a nix flake. On any machine with nix installed:
+
+```sh
+nix build .#default              # builds ./result/bin/easyfilters (fully offline: deps vendored from Cargo.lock)
+./result/bin/easyfilters --list  # or: nix run .#default -- --list
+nix flake check                  # builds the package + smoke test
+nix develop                      # dev shell: plain `cargo build` works, no manual
+                                 # OPENCV_*/LIBCLANG_PATH exports needed; also has
+                                 # v4l2-ctl, ffmpeg and python3+cv2 for the scripts
+```
+
+On NixOS, enable the virtual camera declaratively instead of running the
+setup script — add this repo as a flake input and:
+
+```nix
+# configuration.nix
+{
+  easyfilters.nixosModules.default # loads v4l2loopback with
+  easyfilters.enable = true;       # card_label="EasyFilters Virtual Camera", exclusive_caps=0
+}                                  # and installs the package system-wide
+```
+
+On non-NixOS distros keep using `sudo scripts/setup-virtual-camera.sh`.
+Either way, the user needs `video` group access to `/dev/video*`.
+
 ## Milestone 1: unfiltered passthrough
 
 Reads the real camera and writes the frames through to the v4l2loopback
@@ -56,7 +83,8 @@ cameras only at startup need a restart after easyfilters starts.
 Build note for this nix-based machine: the opencv crate needs the
 `clang-runtime` feature plus `OPENCV_INCLUDE_PATHS=/usr/include`,
 `LIBCLANG_PATH=<nix clang-lib>/lib` and `LD_LIBRARY_PATH=<same>` (see
-Cargo.toml comments).
+Cargo.toml comments) — or just use `nix develop` / `nix build`, which set
+all of these up automatically (see "Build with nix" above).
 
 ## Milestone 3: compositing — background blur & replace
 
