@@ -137,3 +137,156 @@ pub fn default_background(w: u32, h: u32) -> Result<Mat> {
     }
     Ok(m)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A solid-color BGR image.
+    fn solid(w: i32, h: i32, bgr: [u8; 3]) -> Mat {
+        Mat::new_rows_cols_with_default(
+            h,
+            w,
+            CV_8UC3,
+            Scalar::new(bgr[0] as f64, bgr[1] as f64, bgr[2] as f64, 0.0),
+        )
+        .unwrap()
+    }
+
+    /// 64x64 BGR image, left half black, right half white (edge at x=32).
+    fn step_edge() -> Mat {
+        let mut img =
+            Mat::new_rows_cols_with_default(64, 64, CV_8UC3, Scalar::all(0.0)).unwrap();
+        let data = img.data_bytes_mut().unwrap();
+        for y in 0..64 {
+            for x in 32..64 {
+                let i = (y * 64 + x) * 3;
+                data[i..i + 3].copy_from_slice(&[255, 255, 255]);
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn smoother_with_alpha_one_copies_hard_mask() {
+        let mut s = MaskSmoother::new(4, 1.0);
+        assert_eq!(s.update(&[255, 0, 255, 0]), &[1.0, 0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn smoother_ema_blends_toward_new_mask() {
+        let mut s = MaskSmoother::new(1, 0.5);
+        assert_eq!(s.update(&[255]), &[0.5]);
+        assert_eq!(s.update(&[255]), &[0.75]);
+        assert_eq!(s.update(&[0]), &[0.375]);
+    }
+
+    #[test]
+    fn smoother_clamps_alpha_to_unit_range() {
+        let mut hi = MaskSmoother::new(1, 5.0);
+        assert_eq!(hi.update(&[255]), &[1.0]);
+        let mut lo = MaskSmoother::new(1, -1.0);
+        assert_eq!(lo.update(&[255]), &[0.0]);
+    }
+
+    #[test]
+    fn feather_mask_dimensions_and_extremes() {
+        let ones = vec![1.0f32; 16];
+        let m = feather_mask(&ones, 4, 4, 8, 8).unwrap();
+        assert_eq!(m.cols(), 8);
+        assert_eq!(m.rows(), 8);
+        assert_eq!(m.channels(), 1);
+        assert!(m.data_bytes().unwrap().iter().all(|&b| b == 255));
+
+        let zeros = vec![0.0f32; 16];
+        let m0 = feather_mask(&zeros, 4, 4, 8, 8).unwrap();
+        assert!(m0.data_bytes().unwrap().iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn alpha_composite_full_mask_keeps_frame() {
+        let frame = solid(4, 4, [10, 20, 30]);
+        let layer = solid(4, 4, [200, 210, 220]);
+        let mask = frame::mask_mat(&[255u8; 16], 4, 4).unwrap();
+        let out = alpha_composite(&frame, &layer, &mask).unwrap();
+        assert_eq!(out.data_bytes().unwrap(), frame.data_bytes().unwrap());
+    }
+
+    #[test]
+    fn alpha_composite_empty_mask_gives_layer() {
+        let frame = solid(4, 4, [10, 20, 30]);
+        let layer = solid(4, 4, [200, 210, 220]);
+        let mask = frame::mask_mat(&[0u8; 16], 4, 4).unwrap();
+        let out = alpha_composite(&frame, &layer, &mask).unwrap();
+        assert_eq!(out.data_bytes().unwrap(), layer.data_bytes().unwrap());
+    }
+
+    #[test]
+    fn alpha_composite_half_mask_blends() {
+        let frame = solid(2, 2, [200, 200, 200]);
+        let layer = solid(2, 2, [100, 100, 100]);
+        let mask = frame::mask_mat(&[128u8; 4], 2, 2).unwrap();
+        let out = alpha_composite(&frame, &layer, &mask).unwrap();
+        // 200*128/255 + 100*127/255 = 100.39 + 49.80 -> rounds to 100 + 50 = 150
+        for &b in out.data_bytes().unwrap() {
+            assert!((b as i32 - 150).abs() <= 1, "blend byte {b}, want ~150");
+        }
+    }
+
+    #[test]
+    fn replace_composite_full_mask_returns_frame() {
+        let frame = solid(4, 4, [1, 2, 3]);
+        let bg = solid(4, 4, [9, 9, 9]);
+        let mask = frame::mask_mat(&[255u8; 16], 4, 4).unwrap();
+        let out = replace_and_composite(&frame, &bg, &mask).unwrap();
+        assert_eq!(out.data_bytes().unwrap(), frame.data_bytes().unwrap());
+    }
+
+    #[test]
+    fn replace_composite_rejects_size_mismatch() {
+        let frame = solid(4, 4, [1, 2, 3]);
+        let bg = solid(8, 8, [9, 9, 9]);
+        let mask = frame::mask_mat(&[255u8; 16], 4, 4).unwrap();
+        assert!(replace_and_composite(&frame, &bg, &mask).is_err());
+    }
+
+    #[test]
+    fn blur_composite_keeps_fully_masked_frame_sharp() {
+        let frame = step_edge();
+        let mask = frame::mask_mat(&[255u8; 64 * 64], 64, 64).unwrap();
+        let out = blur_and_composite(&frame, &mask, 8.0).unwrap();
+        // person region untouched even though the background layer is blurred
+        assert_eq!(out.data_bytes().unwrap(), frame.data_bytes().unwrap());
+    }
+
+    #[test]
+    fn blur_composite_softens_unmasked_background() {
+        let frame = step_edge();
+        let mask = frame::mask_mat(&[0u8; 64 * 64], 64, 64).unwrap();
+        let out = blur_and_composite(&frame, &mask, 8.0).unwrap();
+        let d = out.data_bytes().unwrap();
+        let at = |x: usize| d[(32 * 64 + x) * 3] as i32;
+        assert!(at(0) <= 4, "far left should stay black, got {}", at(0));
+        assert!(at(63) >= 251, "far right should stay white, got {}", at(63));
+        let mid = at(32);
+        assert!(
+            (60..=195).contains(&mid),
+            "unmasked edge should be blurred, got {mid}"
+        );
+    }
+
+    #[test]
+    fn default_background_is_a_vertical_gradient() {
+        let bg = default_background(8, 4).unwrap();
+        assert_eq!(bg.cols(), 8);
+        assert_eq!(bg.rows(), 4);
+        assert_eq!(bg.channels(), 3);
+        let d = bg.data_bytes().unwrap();
+        let px = |y: usize| &d[y * 8 * 3..y * 8 * 3 + 3];
+        assert_eq!(px(0), &[70, 52, 40], "top row should be the top color");
+        assert_eq!(px(3), &[28, 22, 18], "bottom row should be the bottom color");
+        for c in 0..3 {
+            assert!(px(0)[c] > px(3)[c], "channel {c} should decrease downwards");
+        }
+    }
+}

@@ -231,4 +231,65 @@ mod tests {
         assert_eq!(back.data_bytes().unwrap(), img.data_bytes().unwrap());
         std::fs::remove_file(&path).unwrap();
     }
+
+    /// 32x32 BGR image, left half black, right half white (vertical edge at x=16).
+    fn step_edge() -> Mat {
+        let mut img =
+            Mat::new_rows_cols_with_default(32, 32, CV_8UC3, Scalar::all(0.0)).unwrap();
+        let data = img.data_bytes_mut().unwrap();
+        for y in 0..32 {
+            for x in 16..32 {
+                let i = (y * 32 + x) * 3;
+                data[i..i + 3].copy_from_slice(&[255, 255, 255]);
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn gaussian_blur_preserves_size_and_softens_edge() {
+        let out = gaussian_blur(&step_edge(), 2.0).unwrap();
+        assert_eq!(out.cols(), 32);
+        assert_eq!(out.rows(), 32);
+        let d = out.data_bytes().unwrap();
+        let at = |x: usize| d[(16 * 32 + x) * 3] as i32;
+        assert!(at(0) <= 4, "far left should stay black, got {}", at(0));
+        assert!(at(31) >= 251, "far right should stay white, got {}", at(31));
+        let mid = at(16);
+        assert!(
+            (32..=223).contains(&mid),
+            "edge pixel should be smoothed, got {mid}"
+        );
+    }
+
+    #[test]
+    fn gaussian_blur_keeps_solid_image_constant() {
+        let img = solid(16, 16, [10, 200, 90]);
+        let out = gaussian_blur(&img, 3.0).unwrap();
+        for px in out.data_bytes().unwrap().chunks_exact(3) {
+            assert!((px[0] as i32 - 10).abs() <= 2, "b channel drifted: {px:?}");
+            assert!((px[1] as i32 - 200).abs() <= 2, "g channel drifted: {px:?}");
+            assert!((px[2] as i32 - 90).abs() <= 2, "r channel drifted: {px:?}");
+        }
+    }
+
+    #[test]
+    fn load_image_rejects_missing_file() {
+        assert!(load_image(std::path::Path::new("/definitely/not/here.png")).is_err());
+    }
+
+    #[test]
+    fn load_image_roundtrips_written_file() {
+        let img = solid(10, 7, [5, 66, 250]);
+        let path = std::env::temp_dir().join(format!(
+            "easyfilters-test-{}-load.png",
+            std::process::id()
+        ));
+        write_image(&path, &img).unwrap();
+        let back = load_image(&path).unwrap();
+        assert_eq!(back.cols(), 10);
+        assert_eq!(back.rows(), 7);
+        assert_eq!(back.data_bytes().unwrap(), img.data_bytes().unwrap());
+        std::fs::remove_file(&path).unwrap();
+    }
 }

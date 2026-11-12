@@ -88,7 +88,11 @@ Coverage today:
 
 - `src/frame.rs` — JPEG decode/encode roundtrip, resize, BGR→RGB channel
   order, mask Mat construction/upscaling, overlay & mask rendering, PNG
-  write/read roundtrip (all on synthetic images, no camera needed).
+  write/read roundtrip, Gaussian blur (edge softening, solid-image identity),
+  image loading (all on synthetic images, no camera needed).
+- `src/composite.rs` — EMA mask smoother (convergence, blending, alpha
+  clamping), mask feathering, alpha compositing (full/empty/half mask),
+  blur & replace compositing, default gradient background.
 - `src/segmentation.rs` — input validation (dimensions, buffer length) plus
   a real inference pass over the bundled ONNX model asserting a full-size
   binary mask. This one takes a few seconds in a debug build.
