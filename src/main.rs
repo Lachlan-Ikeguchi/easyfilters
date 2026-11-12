@@ -458,3 +458,45 @@ fn main() -> Result<()> {
     install_signal_handlers();
     run(Args::parse())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_fourcc_accepts_exactly_four_chars() {
+        assert_eq!(parse_fourcc("MJPG").unwrap().to_string(), "MJPG");
+        assert_eq!(parse_fourcc("YUYV").unwrap().to_string(), "YUYV");
+    }
+
+    #[test]
+    fn parse_fourcc_rejects_wrong_length() {
+        assert!(parse_fourcc("MJP").is_err());
+        assert!(parse_fourcc("MJPGS").is_err());
+        assert!(parse_fourcc("").is_err());
+    }
+
+    #[test]
+    fn model_path_prefers_cli_arg() {
+        let args = Args::try_parse_from(["easyfilters", "--model", "/tmp/custom.onnx"]).unwrap();
+        assert_eq!(model_path(&args), PathBuf::from("/tmp/custom.onnx"));
+    }
+
+    #[test]
+    fn model_path_falls_back_to_bundled_default() {
+        // The env-var branch is not exercised here (mutating the process env
+        // in tests is unsafe in edition 2024 and racy across test threads).
+        if std::env::var_os("EASYFILTERS_MODEL").is_some() {
+            return;
+        }
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        assert_eq!(model_path(&args), PathBuf::from(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn now_timeval_is_sane() {
+        let tv = now_timeval();
+        assert!(tv.tv_sec > 1_700_000_000); // after 2023-11-14
+        assert!((0..1_000_000).contains(&tv.tv_usec));
+    }
+}

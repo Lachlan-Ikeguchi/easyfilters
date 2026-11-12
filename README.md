@@ -54,3 +54,24 @@ Build note for this nix-based machine: the opencv crate needs the
 `clang-runtime` feature plus `OPENCV_INCLUDE_PATHS=/usr/include`,
 `LIBCLANG_PATH=<nix clang-lib>/lib` and `LD_LIBRARY_PATH=<same>` (see
 Cargo.toml comments).
+
+## Tests
+
+Unit tests use Rust's built-in test harness — no external framework needed:
+
+```sh
+cargo test            # runs all #[cfg(test)] unit tests
+cargo test -- --nocapture   # show println!/tracing output from tests
+```
+
+Coverage today:
+
+- `src/frame.rs` — JPEG decode/encode roundtrip, resize, BGR→RGB channel
+  order, mask Mat construction/upscaling, overlay & mask rendering, PNG
+  write/read roundtrip (all on synthetic images, no camera needed).
+- `src/segmentation.rs` — input validation (dimensions, buffer length) plus
+  a real inference pass over the bundled ONNX model asserting a full-size
+  binary mask. This one takes a few seconds in a debug build.
+- `src/main.rs` — `parse_fourcc`, `model_path` precedence, `now_timeval`.
+- `src/v4l2.rs` is not unit-tested: it drives real `/dev/video*` nodes.
+  Exercise it via `--list` and `--self-test` instead.

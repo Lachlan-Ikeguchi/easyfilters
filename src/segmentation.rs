@@ -68,12 +68,7 @@ impl Segmenter {
     /// Returns an 8-bit mask (MODEL_H rows x MODEL_W cols, row-major),
     /// 255 = person, 0 = background.
     pub fn mask(&self, rgb: &[u8], w: usize, h: usize) -> Result<Vec<u8>> {
-        if w != MODEL_W || h != MODEL_H {
-            bail!("expected {}x{} input, got {}x{}", MODEL_W, MODEL_H, w, h);
-        }
-        if rgb.len() != w * h * 3 {
-            bail!("bad rgb buffer len {} (want {})", rgb.len(), w * h * 3);
-        }
+        validate_input(rgb, w, h)?;
         // HWC RGB u8 -> CHW f32 normalized to [-1, 1], batch dim 1.
         let mut chw = vec![0f32; 3 * w * h];
         for p in 0..w * h {
@@ -90,5 +85,67 @@ impl Segmenter {
             .iter()
             .map(|&v| if v >= MASK_THRESHOLD { 255u8 } else { 0u8 })
             .collect())
+    }
+}
+
+/// `rgb` must be tightly packed RGB8 at exactly MODEL_W x MODEL_H.
+fn validate_input(rgb: &[u8], w: usize, h: usize) -> Result<()> {
+    if w != MODEL_W || h != MODEL_H {
+        bail!("expected {}x{} input, got {}x{}", MODEL_W, MODEL_H, w, h);
+    }
+    if rgb.len() != w * h * 3 {
+        bail!("bad rgb buffer len {} (want {})", rgb.len(), w * h * 3);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bundled_model() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/selfie_segmentation_landscape.onnx")
+    }
+
+    #[test]
+    fn validate_input_accepts_model_sized_rgb() {
+        let rgb = vec![0u8; MODEL_W * MODEL_H * 3];
+        assert!(validate_input(&rgb, MODEL_W, MODEL_H).is_ok());
+    }
+
+    #[test]
+    fn validate_input_rejects_wrong_dimensions() {
+        let rgb = vec![0u8; MODEL_W * MODEL_H * 3];
+        assert!(validate_input(&rgb, MODEL_W + 1, MODEL_H).is_err());
+        assert!(validate_input(&rgb, MODEL_W, MODEL_H + 1).is_err());
+        assert!(validate_input(&rgb, 0, 0).is_err());
+    }
+
+    #[test]
+    fn validate_input_rejects_wrong_buffer_len() {
+        assert!(validate_input(&[0u8; 10], MODEL_W, MODEL_H).is_err());
+        assert!(validate_input(&[], MODEL_W, MODEL_H).is_err());
+    }
+
+    /// Real inference pass over the bundled model on a uniform gray frame:
+    /// output must be a full-size, strictly binary mask.
+    #[test]
+    fn mask_returns_binary_mask_of_model_size() {
+        let seg = Segmenter::load(&bundled_model()).expect("load bundled model");
+        let rgb = vec![128u8; MODEL_W * MODEL_H * 3];
+        let mask = seg.mask(&rgb, MODEL_W, MODEL_H).expect("mask");
+        assert_eq!(mask.len(), MODEL_W * MODEL_H);
+        assert!(mask.iter().all(|&v| v == 0 || v == 255));
+    }
+
+    /// The preprocessing must normalize RGB to [-1, 1]: a mid-gray pixel
+    /// maps to 0.0. Exercised through the model's input path indirectly —
+    /// here we just pin the normalization formula itself.
+    #[test]
+    fn normalization_maps_mid_gray_to_zero() {
+        let v = (128u8 as f32 / 255.0 - 0.5) * 2.0;
+        assert!(v.abs() < 0.01);
+        assert_eq!((0u8 as f32 / 255.0 - 0.5) * 2.0, -1.0);
+        assert_eq!((255u8 as f32 / 255.0 - 0.5) * 2.0, 1.0);
     }
 }
