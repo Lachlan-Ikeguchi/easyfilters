@@ -39,7 +39,10 @@ can watch the segmentation live in any camera app before the GUI exists:
 cargo build --release                       # release matters: ~7 ms infer vs ~300 ms debug
 ./target/release/easyfilters --mode overlay   # person kept, background dimmed/tinted
 ./target/release/easyfilters --mode mask      # pure grayscale mask
-./target/release/easyfilters --mode passthrough  # milestone 1 behavior (default)
+./target/release/easyfilters --mode passthrough  # milestone 1 behavior, unfiltered
+
+Running with no `--mode` defaults to `--mode replace` (solid #003200
+background) since milestone 3.
 ./target/release/easyfilters --self-test frame.jpg  # writes mask.png + overlay.png next to it
 ```
 
@@ -64,7 +67,7 @@ and feathered mask edges:
 ```sh
 ./target/release/easyfilters --mode blur                          # background Gaussian-blurred
 ./target/release/easyfilters --mode blur --blur-strength 25        # stronger blur (sigma at 720p)
-./target/release/easyfilters --mode replace                       # background = solid #003200
+./target/release/easyfilters --mode replace                       # background = solid #003200 (the default mode)
 ./target/release/easyfilters --mode replace --background ~/Pictures/bg.jpg
 ./target/release/easyfilters --self-test frame.jpg                 # also writes blur.png + replace.png
 ```

@@ -79,8 +79,9 @@ struct Args {
     /// List devices and their formats, then exit
     #[arg(long)]
     list: bool,
-    /// What to write to the virtual camera
-    #[arg(long, value_enum, default_value_t = Mode::Passthrough)]
+    /// What to write to the virtual camera (default: replace with the solid
+    /// #003200 background)
+    #[arg(long, value_enum, default_value_t = Mode::Replace)]
     mode: Mode,
     /// ONNX segmentation model (default: bundled assets/ model, or $EASYFILTERS_MODEL)
     #[arg(long)]

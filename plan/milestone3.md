@@ -184,3 +184,6 @@ in release, single-threaded).
   `Scalar`-as-`ToInputArray` question for `subtract`).
 - Regression: `--mode passthrough` / `overlay` / `mask` paths unchanged and
   verified running; `--list` unchanged.
+- **Default mode changed to `replace`** (solid #003200 background) — with
+  real filters shipping in M3, a bare `easyfilters` run now produces the
+  filtered feed; `--mode passthrough` remains available explicitly.
