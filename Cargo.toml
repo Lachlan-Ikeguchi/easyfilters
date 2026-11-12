@@ -1,21 +1,24 @@
 [package]
-name = "master"
+name = "easyfilters"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
-clap = "4.6.1"
-iced = "0.14.0"
-iced_aw = "0.14.1"
-opencv = "0.99.0"
-pipewire = "0.10.0"
-serde = "1.0.228"
-serde_json = "1.0.150"
-tokio = "1.52.3"
-toml = "1.1.2"
+clap = { version = "4.6.1", features = ["derive"] }
 tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
-tray-item = "0.10.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 v4l2r = "0.0.7"
+# Used by later milestones (GUI, ONNX inference, tray, config). Commented out
+# for the milestone-1 build because this machine lacks their system dev
+# libraries (libpipewire-0.3, gtk3/appindicator); re-enable when needed:
+# iced = "0.14.0"
+# iced_aw = "0.14.1"
+# opencv = "0.99.0"
+# pipewire = "0.10.0"
+# serde = "1.0.228"
+# serde_json = "1.0.150"
+# tokio = "1.52.3"
+# toml = "1.1.2"
+# tray-item = "0.10.0"
 

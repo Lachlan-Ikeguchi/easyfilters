@@ -147,6 +147,20 @@ overridable via `--label` / `--exclusive-caps` / `--video-nr`, plus `--status`,
 6. **README** — usage section incl. the one-time `sudo
    scripts/setup-virtual-camera.sh`; commit on `feat/unfiltered_passthrough`.
 
+## Implementation findings (2026-11-12, verified live)
+
+- v4l2r's `ioctl::dqbuf` leaves `v4l2_buffer.memory` unset → kernel returns
+  EINVAL. Worked around with a raw `VIDIOC_DQBUF` that sets `type` + `memory`.
+- v4l2loopback 0.15.x rotates never-queued buffers through output-queue
+  DQBUF (upstream PRs #656/#659), so the reclaim loop is bounded and only
+  accepts indices currently in flight.
+- `poll()` returns EINTR when SIGTERM arrives; treated as "not ready" so the
+  loop can observe the shutdown flag.
+- Loopback accepts MJPG on its output queue (confirmed via `--list` and by
+  decoding frames read back with ffmpeg: valid 1280x720 JPEG).
+- Measured: 1280x720@30 MJPG passthrough at ~29.8 fps, 0 drops, single thread.
+- Build needs `LIBCLANG_PATH` to the nix clang-lib on this machine (bindgen).
+
 ## Risks / open questions
 
 - `exclusive_caps` trade-off is decided for the MVP (0 = visible everywhere);
