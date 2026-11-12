@@ -80,12 +80,23 @@ def main() -> int:
     try:
         while args.frames == 0 or i < args.frames:
             i += 1
-            ret, frame = cap.read()
+            try:
+                ret, frame = cap.read()
+            except cv2.error as e:
+                # e.g. idle loopback defaults to a raw BGR4 buffer that cv2
+                # misreads as 3-channel: "not divisible by the new number of
+                # rows" — treat as a failed read, don't crash.
+                ret, frame = False, None
+                if fails == 0:
+                    lines = str(e).splitlines()
+                    print(f"frame read error: {lines[-1] if lines else e}")
             if not ret or frame is None:
                 fails += 1
                 if fails == 1:
-                    print("frame read failed (no writer? waiting...)")
-                elif args.frames == 0 and time.time() - last_stats >= 5:
+                    print("frame read failed (no writer? wrong format? waiting...)")
+                else:
+                    time.sleep(0.2)  # don't busy-spin on an idle/broken device
+                if args.frames == 0 and time.time() - last_stats >= 5:
                     print(f"  ... still no frames after {fails} reads — is easyfilters running? (Ctrl-C to quit)")
                     last_stats = time.time()
                 continue
@@ -120,7 +131,9 @@ def main() -> int:
         cv2.destroyAllWindows()
     if ok == 0:
         print("NO FRAMES — is easyfilters running and writing to this device? "
-              "(start it first: cargo run -- --output <this device>)")
+              "(start it first: ./target/release/easyfilters --output <this device>). "
+              "An idle loopback reports a raw BGR4 default that cv2 misreads; "
+              "try --fourcc MJPG --width 1280 --height 720 to match easyfilters' output.")
     print("OK" if ok > 0 else "NO FRAMES")
     return 0 if ok > 0 else 2
 

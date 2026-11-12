@@ -1,0 +1,20 @@
+selfie_segmentation_landscape.onnx
+===================================
+
+MediaPipe Selfie Segmentation (landscape model, 144x256), ONNX export.
+Copyright (c) Google LLC. Licensed under the Apache License, Version 2.0
+("the License"); you may not use this file except in compliance with the
+License. You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+
+Source: https://huggingface.co/onnx-community/mediapipe_selfie_segmentation_landscape
+        (file onnx/model.onnx, fp32, 462338 bytes)
+Original model: https://github.com/google-ai-edge/mediapipe
+sha256: 7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24

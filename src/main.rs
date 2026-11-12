@@ -1,26 +1,54 @@
-//! easyfilters — milestone 1: unfiltered passthrough from the real camera to
-//! the v4l2loopback virtual camera (compressed MJPG copied verbatim).
+//! easyfilters — milestone 2: passthrough from the real camera to the
+//! v4l2loopback virtual camera, optionally with the ONNX person-segmentation
+//! mask rendered into the feed (--mode overlay|mask).
 
+mod frame;
+mod segmentation;
 mod v4l2;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+use opencv::prelude::*;
 use tracing::info;
 use v4l2r::ioctl::Capabilities;
 use v4l2r::{bindings, PixelFormat, QueueType};
 
+use segmentation::{Segmenter, MODEL_H, MODEL_W};
 use v4l2::Device;
 
 const OUTPUT_LABEL: &str = "EasyFilters Virtual Camera";
+const DEFAULT_MODEL: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/selfie_segmentation_landscape.onnx"
+);
+const JPEG_QUALITY: i32 = 80;
+
+/// What gets written to the virtual camera.
+#[derive(Clone, Copy, ValueEnum)]
+enum Mode {
+    /// Milestone 1 behavior: copy the input MJPG frame verbatim.
+    Passthrough,
+    /// Frame with the segmented person kept, background dimmed/tinted.
+    Overlay,
+    /// Pure grayscale person mask.
+    Mask,
+}
+
+#[derive(Default)]
+struct StageTiming {
+    decode: Duration,
+    infer: Duration,
+    encode: Duration,
+}
 
 #[derive(Parser)]
 #[command(
     name = "easyfilters",
-    about = "Virtual camera with background filters (milestone 1: unfiltered passthrough)"
+    about = "Virtual camera with background filters (milestone 2: segmentation mask preview)"
 )]
 struct Args {
     /// Input camera device (default: auto-detect first uvcvideo capture node)
@@ -44,6 +72,60 @@ struct Args {
     /// List devices and their formats, then exit
     #[arg(long)]
     list: bool,
+    /// What to write to the virtual camera
+    #[arg(long, value_enum, default_value_t = Mode::Passthrough)]
+    mode: Mode,
+    /// ONNX segmentation model (default: bundled assets/ model, or $EASYFILTERS_MODEL)
+    #[arg(long)]
+    model: Option<PathBuf>,
+    /// Decode one image, run segmentation, write mask.png/overlay.png next to it, exit
+    #[arg(long)]
+    self_test: Option<PathBuf>,
+}
+
+fn model_path(args: &Args) -> PathBuf {
+    args.model
+        .clone()
+        .or_else(|| std::env::var("EASYFILTERS_MODEL").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL))
+}
+
+/// Decode `path` (JPEG), run the segmenter, write mask.png / overlay.png
+/// next to it and print the mask coverage. Exits without touching cameras.
+fn self_test(path: &Path, args: &Args) -> Result<()> {
+    let mp = model_path(args);
+    let seg = Segmenter::load(&mp)
+        .with_context(|| format!("load model {}", mp.display()))?;
+    let jpeg = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let img = frame::decode_mjpg(&jpeg)?;
+    let (w, h) = (img.cols() as u32, img.rows() as u32);
+    info!(width = w, height = h, "decoded self-test image");
+
+    let t = Instant::now();
+    let small = frame::resize(&img, MODEL_W as u32, MODEL_H as u32)?;
+    let rgb = frame::bgr_to_rgb(&small)?;
+    let mask = seg.mask(&rgb, MODEL_W, MODEL_H)?;
+    let infer = t.elapsed();
+
+    let coverage = mask.iter().filter(|&&v| v > 0).count() as f64 / mask.len() as f64;
+    println!(
+        "mask coverage: {:.1}%  (infer {:.1} ms)",
+        coverage * 100.0,
+        infer.as_secs_f64() * 1000.0
+    );
+
+    let mask_small = frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
+    let mask_full = frame::upscale_mask(&mask_small, w, h)?;
+    let overlay = frame::render_overlay(&img, &mask_full)?;
+    let mask_img = frame::render_mask(&mask_full)?;
+
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mask_path = dir.join("mask.png");
+    let overlay_path = dir.join("overlay.png");
+    frame::write_image(&mask_path, &mask_img)?;
+    frame::write_image(&overlay_path, &overlay)?;
+    println!("wrote {} and {}", mask_path.display(), overlay_path.display());
+    Ok(())
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -193,6 +275,9 @@ fn run(args: Args) -> Result<()> {
         print_list(&devs);
         return Ok(());
     }
+    if let Some(p) = &args.self_test {
+        return self_test(p, &args);
+    }
 
     let input_path = match &args.input {
         Some(p) => p.clone(),
@@ -236,6 +321,17 @@ fn run(args: Args) -> Result<()> {
         "negotiated format"
     );
 
+    let seg = match args.mode {
+        Mode::Passthrough => None,
+        _ => {
+            let mp = model_path(&args);
+            let s = Segmenter::load(&mp)
+                .with_context(|| format!("load model {}", mp.display()))?;
+            info!(model = %mp.display(), "segmenter loaded");
+            Some(s)
+        }
+    };
+
     let in_q = in_dev.queue(QueueType::VideoCapture, args.buffers)?;
     let mut out_q = out_dev.queue(QueueType::VideoOutput, args.buffers)?;
     info!(buffers = in_q.buffers.len(), "queues allocated");
@@ -250,6 +346,7 @@ fn run(args: Args) -> Result<()> {
     let mut frames = 0u64;
     let mut drops = 0u64;
     let mut last = Instant::now();
+    let mut stage = StageTiming::default();
 
     let n_out = out_q.buffers.len();
     while RUNNING.load(Ordering::SeqCst) {
@@ -274,17 +371,48 @@ fn run(args: Args) -> Result<()> {
         if let Some(d) = in_q.try_dqbuf()? {
             match out_inflight.iter().position(|&f| !f) {
                 Some(oidx) => {
-                    let n = {
-                        let src = &in_q.buffers[d.index as usize].mapping.as_ref()
-                            [..d.bytesused as usize];
-                        let dst = out_q.buffers[oidx].mapping.as_mut();
-                        let n = src.len().min(dst.len());
-                        dst[..n].copy_from_slice(&src[..n]);
-                        n
+                    let src = &in_q.buffers[d.index as usize].mapping.as_ref()
+                        [..d.bytesused as usize];
+                    let (n, timing) = match (&seg, args.mode) {
+                        (None, Mode::Passthrough) => {
+                            let dst = out_q.buffers[oidx].mapping.as_mut();
+                            let n = src.len().min(dst.len());
+                            dst[..n].copy_from_slice(&src[..n]);
+                            (n, StageTiming::default())
+                        }
+                        (Some(seg), mode) => {
+                            let t = Instant::now();
+                            let img = frame::decode_mjpg(src)?;
+                            let decode = t.elapsed();
+                            let t = Instant::now();
+                            let small =
+                                frame::resize(&img, MODEL_W as u32, MODEL_H as u32)?;
+                            let rgb = frame::bgr_to_rgb(&small)?;
+                            let mask = seg.mask(&rgb, MODEL_W, MODEL_H)?;
+                            let infer = t.elapsed();
+                            let t = Instant::now();
+                            let mask_small =
+                                frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
+                            let mask_full =
+                                frame::upscale_mask(&mask_small, in_fmt.width, in_fmt.height)?;
+                            let out_img = match mode {
+                                Mode::Overlay => frame::render_overlay(&img, &mask_full)?,
+                                Mode::Mask => frame::render_mask(&mask_full)?,
+                                Mode::Passthrough => unreachable!(),
+                            };
+                            let jpeg = frame::encode_jpeg(&out_img, JPEG_QUALITY)?;
+                            let dst = out_q.buffers[oidx].mapping.as_mut();
+                            let n = jpeg.len().min(dst.len());
+                            dst[..n].copy_from_slice(&jpeg[..n]);
+                            let encode = t.elapsed();
+                            (n, StageTiming { decode, infer, encode })
+                        }
+                        (None, _) => unreachable!(),
                     };
                     out_q.qbuf(oidx as u32, n as u32, now_timeval())?;
                     out_inflight[oidx] = true;
                     frames += 1;
+                    stage = timing;
                 }
                 None => {
                     // Drop-frame policy: no free output buffer, drop the frame.
@@ -297,7 +425,15 @@ fn run(args: Args) -> Result<()> {
         let elapsed = last.elapsed();
         if elapsed >= Duration::from_secs(2) {
             let fps = frames as f64 / elapsed.as_secs_f64();
-            info!(frames, drops, fps, "stats");
+            info!(
+                frames,
+                drops,
+                fps,
+                decode_ms = stage.decode.as_secs_f64() * 1000.0,
+                infer_ms = stage.infer.as_secs_f64() * 1000.0,
+                encode_ms = stage.encode.as_secs_f64() * 1000.0,
+                "stats"
+            );
             frames = 0;
             drops = 0;
             last = Instant::now();

@@ -42,12 +42,12 @@ Repo state at planning time: branch `feat/milestone-2`, clean, at `30ebcb2`
   enable the `pipewire` crate), keep GUI/tray (`iced`, `tray-item`) for M4.
 - Network: huggingface.co reachable (HTTP 200). Model chosen:
   `onnx-community/mediapipe_selfie_segmentation_landscape`, file
-  `onnx/model.onnx`, fp32, **462,338 bytes** (verified via `x-linked-size` on
-  the resolve redirect), license Apache-2.0 (MediaPipe) — fine to vendor.
+  `onnx/model.onnx`, fp32, **462,338 bytes**, license Apache-2.0 (MediaPipe) —
+  vendored into `assets/` (the HF repo has no LICENSE file, so
+  `assets/LICENSE-mediapipe-selfie-segmentation.txt` is an attribution notice).
   Pinned URL:
   `https://huggingface.co/onnx-community/mediapipe_selfie_segmentation_landscape/resolve/main/onnx/model.onnx`
-  (sha256 to be recorded in this file at step 2 when the file is vendored;
-  the planning session could not fetch it, only HEAD it.)
+  sha256: `7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24`
 - `tract-onnx` latest is 0.23.x (docs.rs) and is **pure Rust** — no system
   deps, which fits this nix-based box. Prefer it over `ort` (which needs a
   prebuilt onnxruntime). crates.io access works (M1 deps built fine).
@@ -143,20 +143,62 @@ Repo state at planning time: branch `feat/milestone-2`, clean, at `30ebcb2`
   ≥ ~25 fps at 1280x720@30 with ~0 drops and single-digit `infer_ms`.
 - Regression: `--mode passthrough` still byte-copies (M1 behavior unchanged).
 
+## Implementation findings (2026-11-12, verified live)
+
+- **opencv 0.102 builds on this box**, but only with the crate's
+  `clang-runtime` feature **plus** `OPENCV_INCLUDE_PATHS=/usr/include`
+  (headers in `/usr/include/opencv2`, not `opencv4/`), `LIBCLANG_PATH` to the
+  nix clang-lib, and `LD_LIBRARY_PATH` to the same so the build script can
+  dlopen it. Without `clang-runtime`, bindgen's `clang-sys/runtime` feature
+  gets unified on and the binding generator panics with "a `libclang` shared
+  library is not loaded on this thread". Full build (tract + opencv bindgen):
+  ~63 s incremental after deps are cached.
+- **Model I/O confirmed** via `examples/dump_model.rs`:
+  input `pixel_values` F32 NCHW `[batch_size, 3, 144, 256]` (H=144, W=256);
+  output `/Sigmoid_2` F32 `[batch_size, 1, 144, 256]` sigmoid, person ≈ 1.
+  Preprocessing implemented: RGB → [0,1] → [-1,1], NCHW, batch 1.
+- **tract 0.23 quirks:** the batch dim is the symbol `batch_size`, and an
+  internal `Resize` depends on it — optimizing before binding symbols fails
+  with "Undetermined symbol in expression: batch_size", and pinning the input
+  fact to batch 1 fails with "Impossible to unify Sym(batch_size) with Val(1)".
+  Working recipe: `into_typed()` → `set_symbols()` binding **all** symbols to
+  `TDim::from(1)` (`typed.symbols.all_symbols()` — the field is `symbols`,
+  not a method) → **`into_optimized()`** (works once symbols are concrete;
+  this is where the speed comes from: infer 38 ms → 7 ms) → `into_runnable()`.
+  Runtime API: `run()` takes `TVec<TValue>`
+  (`Tensor::from(ndarray_array).into_tvalue()`, use `tract_ndarray` from the
+  prelude so ndarray versions match), read outputs with
+  `to_plain_array_view::<f32>()`.
+- **opencv 0.102 quirks:** trait methods need `opencv::prelude::*`
+  (`MatTraitConst`, `MatTraitConstManual::data_bytes`, `VectorToVec`);
+  `imgproc::cvt_color` takes a 5th `AlgorithmHint` arg; masked copy is the
+  free fn `core::copy_to(src, dst, mask)`; `reshape` returns a borrowed
+  `BoxedRef`, so build mask Mats via `Mat::new_rows_cols_with_default` +
+  `data_bytes_mut`.
+- **Self-test** (`--self-test` on a 640x480 frame from the real camera):
+  mask coverage 28.1%, person-shaped blob bottom-center (bbox y 200–479,
+  x 85–639, center 0.55/0.79); wrote `mask.png` / `overlay.png`; first infer
+  275 ms (debug build, includes warmup).
+- **Live on /dev/video0 @ 1280x720 MJPG:** `--mode overlay` and `--mode mask`
+  both verified by reading the loopback back with `scripts/debug_camera.py`
+  (valid JPEG frames, no black frames). Mask feed: 16.5% white blob
+  (bbox y 275–719, x 280–1159) — segmentation visibly working on the virtual
+  camera. `--mode passthrough` regression-checked at 29.8 fps, 0 drops.
+  Stats (release build, single thread): decode ~3 ms, **infer ~7 ms**,
+  encode ~4 ms → **29.8 fps at 1280x720@30, 0 drops** — the 720p30 CPU target
+  is met. (Debug build: infer ~270–440 ms → ~3 fps; use `--release`.)
+- **Flatpak visibility confirmed:** COSMIC Camera's sandbox sees
+  `/dev/video0`–`video2`; Discord and Firefox already carry `devices=all`;
+  the loopback is also PipeWire source node `149` in `wpctl` for portal-based
+  apps (Firefox). No Flatseal changes needed on this box.
+
 ## Risks / open questions
 
-- opencv crate vs the non-standard 4.13 header layout + nix libclang — mitigated
-  by `OPENCV_INCLUDE_PATHS` / `LIBCLANG_PATH`; pure-Rust fallback for M2 if the
-  bindgen build fails.
-- Model I/O spec (NCHW vs HWC, normalization range) must come from the graph
-  dump in step 3, not from assumption; recorded in findings when done.
-- tract-onnx 0.23 is a large pure-Rust build (several minutes) — acceptable,
-  cargo cache is warm from M1.
-- Flatpak sandbox: Firefox via PipeWire portal already sees the source; Discord
-  may need a device grant (Flatseal / `flatpak override --device=all`).
-  Apps that enumerate cameras only at startup need a restart — README note.
-- MJPG decode cost at 720p30: ~3–6 ms with opencv, more with pure-Rust
-  `jpeg-decoder`; if fps suffers, drop to 960x540 or the YUYV input path.
+- Debug builds run at ~3 fps (tract unoptimized ~300 ms/infer); always
+  measure with `--release`. 720p30 on CPU is met in release (29.8 fps, 0
+  drops, infer ~7 ms); 1080p30 remains a stretch goal (GPU path, per idea doc).
+- Flatpak: apps that enumerate cameras only at startup need a restart after
+  starting easyfilters — README note.
 - Mask flicker without temporal smoothing — deferred to M3 by design.
-- Model sha256 gets pinned at step 2 (the planning session could only HEAD the
-  URL, the download itself needs an approval).
+- If opencv had failed to build, the fallback was pure-Rust
+  `jpeg-decoder` + `image`; not needed.

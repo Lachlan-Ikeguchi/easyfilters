@@ -9,12 +9,21 @@ clap = { version = "4.6.1", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 v4l2r = "0.0.7"
-# Used by later milestones (GUI, ONNX inference, tray, config). Commented out
-# for the milestone-1 build because this machine lacks their system dev
-# libraries (libpipewire-0.3, gtk3/appindicator); re-enable when needed:
+# Milestone 2 (segmentation): pure-Rust ONNX runtime + OpenCV for frame
+# decode/resize/encode. On this nix box the opencv build needs:
+#   OPENCV_INCLUDE_PATHS=/usr/include   (headers live in /usr/include/opencv2,
+#                                        not the opencv4/ layout)
+#   LIBCLANG_PATH=<nix clang-lib>/lib   (bindgen/libclang; e.g.
+#                                        /nix/store/...-clang-21.1.8-lib/lib)
+#   LD_LIBRARY_PATH=<same>              (so the build script can dlopen it)
+# plus the crate's `clang-runtime` feature (bindgen's clang-sys/runtime is
+# unified on, so the binding generator must load libclang at runtime).
+tract-onnx = "0.23"
+opencv = { version = "0.102", features = ["clang-runtime"] }
+# Used by later milestones (GUI, tray, config). Still commented out: this
+# machine lacks their system dev libraries (libpipewire-0.3, gtk3/appindicator):
 # iced = "0.14.0"
 # iced_aw = "0.14.1"
-# opencv = "0.99.0"
 # pipewire = "0.10.0"
 # serde = "1.0.228"
 # serde_json = "1.0.150"
