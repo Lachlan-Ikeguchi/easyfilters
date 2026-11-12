@@ -22,14 +22,25 @@ v4l2r = "0.0.7"
 # needed: flake.nix sets them from nixpkgs' libclang/opencv4/linuxHeaders.
 tract-onnx = "0.23"
 opencv = { version = "0.102", features = ["clang-runtime"] }
-# Used by later milestones (GUI, tray, config). Still commented out: this
-# machine lacks their system dev libraries (libpipewire-0.3, gtk3/appindicator):
-# iced = "0.14.0"
-# iced_aw = "0.14.1"
-# pipewire = "0.10.0"
-# serde = "1.0.228"
-# serde_json = "1.0.150"
-# tokio = "1.52.3"
-# toml = "1.1.2"
-# tray-item = "0.10.0"
+# Milestone 4 (GUI + tray + config).
+# iced with the tiny-skia software renderer only (no wgpu: no shaderc/cmake/GPU
+# and no extra system libs) plus the image widget for the live preview. The
+# wayland/x11 features pull in winit's compositors backends; libxkbcommon and
+# libwayland are provided by the nix flake (dlopen'd/linked by winit).
+# tray-item with the ksni feature: pure-Rust StatusNotifierItem over D-Bus,
+# no gtk3/libappindicator system libraries needed.
+# pipewire/tokio stay unused: capture is the v4l2r MMAP path in a std::thread.
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
+iced = { version = "0.14.0", default-features = false, features = [
+    "tiny-skia",
+    "image",
+    "thread-pool",
+    "wayland",
+    "x11",
+    "web-colors",
+    "crisp",
+    "fira-sans",
+] }
+tray-item = { version = "0.10.0", default-features = false, features = ["ksni"] }
 

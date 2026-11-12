@@ -42,6 +42,10 @@
               linuxHeaders
               # libstdc++ for the opencv libs the binary links against.
               stdenv.cc.cc.lib
+              # winit (iced, milestone 4): wayland/x11 backends link or dlopen
+              # libwayland and libxkbcommon at build/runtime.
+              wayland
+              libxkbcommon
             ];
 
             LIBCLANG_PATH = "${libclangLib}/lib";
@@ -58,7 +62,14 @@
               mkdir -p "$out/share/easyfilters"
               cp assets/selfie_segmentation_landscape.onnx "$out/share/easyfilters/"
               wrapProgram "$out/bin/easyfilters" \
-                --set-default EASYFILTERS_MODEL "$out/share/easyfilters/selfie_segmentation_landscape.onnx"
+                --set-default EASYFILTERS_MODEL "$out/share/easyfilters/selfie_segmentation_landscape.onnx" \
+                --prefix LD_LIBRARY_PATH : "${
+                  pkgs.lib.makeLibraryPath [
+                    pkgs.stdenv.cc.cc.lib
+                    pkgs.wayland
+                    pkgs.libxkbcommon
+                  ]
+                }"
             '';
 
             meta = with pkgs.lib; {
@@ -104,13 +115,16 @@
             v4l-utils
             ffmpeg
             (python3.withPackages (ps: [ ps.opencv4 ]))
+            # winit (iced GUI) dlopens these at runtime
+            wayland
+            libxkbcommon
           ];
           # Same env the package build uses, so plain `cargo build` inside
           # `nix develop` works without manual OPENCV_*/LIBCLANG_PATH exports.
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           V4L2R_VIDEODEV2_H_PATH = "${pkgs.linuxHeaders}/include/linux";
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib:${pkgs.wayland}/lib:${pkgs.libxkbcommon}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '';
         };
       });
