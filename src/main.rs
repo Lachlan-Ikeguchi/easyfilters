@@ -40,7 +40,7 @@ enum Mode {
     /// Person kept sharp, background Gaussian-blurred (--blur-strength).
     Blur,
     /// Person kept sharp, background replaced (--background image or a
-    /// default gradient).
+    /// solid #003200 default).
     Replace,
 }
 
@@ -88,7 +88,7 @@ struct Args {
     /// Gaussian blur sigma for --mode blur, expressed at 720p (scaled with the actual height)
     #[arg(long, default_value_t = 15.0)]
     blur_strength: f64,
-    /// Background image for --mode replace (default: generated gradient)
+    /// Background image for --mode replace (default: solid #003200)
     #[arg(long)]
     background: Option<PathBuf>,
     /// EMA alpha for mask temporal smoothing, 0..1 (higher = smoother, more lag)
@@ -107,7 +107,7 @@ fn model_path(args: &Args) -> PathBuf {
 }
 
 /// Background for --mode replace: the --background image resized to the
-/// frame, or a generated gradient when no image is given.
+/// frame, or a solid #003200 when no image is given.
 fn load_background(args: &Args, w: u32, h: u32) -> Result<opencv::core::Mat> {
     match &args.background {
         Some(p) => {
@@ -383,7 +383,7 @@ fn run(args: Args) -> Result<()> {
                     .background
                     .as_ref()
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<gradient>".to_string()),
+                    .unwrap_or_else(|| "#003200".to_string()),
                 "background ready"
             );
             Some(b)

@@ -154,8 +154,9 @@ in release, single-threaded).
   start for budget safety.
 - **`--blur-strength` is expressed at 720p and scaled by actual height**
   (default 15). `--mode replace` loads `--background` once and stretches
-  it to frame size; without `--background` a vertical dark gradient is
-  generated (`composite::default_background`).
+  it to frame size; without `--background` a solid #003200 background is
+  generated (`composite::default_background` — changed from the planned
+  gradient to a flat color on request).
 - **EMA smoother** (`MaskSmoother`, f32 state at 144x256, α default 0.6 via
   `--mask-smoothing`) updates per frame; blur/replace use the soft mask,
   overlay/mask keep the raw hard mask (M2 behavior + flicker reference).

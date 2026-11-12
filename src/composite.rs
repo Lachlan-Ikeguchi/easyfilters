@@ -113,29 +113,17 @@ pub fn replace_and_composite(frame: &Mat, bg: &Mat, mask_full: &Mat) -> Result<M
     alpha_composite(frame, bg, mask_full)
 }
 
-/// Default background when --background is not given: a vertical dark
-/// gradient (BGR), so --mode replace works out of the box.
+/// Default background when --background is not given: solid #003200, so
+/// --mode replace works out of the box. Mats are BGR, but R and B are both
+/// 0 in #003200, so the BGR triple is (0, 0x32, 0).
 pub fn default_background(w: u32, h: u32) -> Result<Mat> {
-    let mut m = Mat::new_rows_cols_with_default(h as i32, w as i32, CV_8UC3, Scalar::all(0.0))
-        .context("allocate background")?;
-    let top: [f64; 3] = [70.0, 52.0, 40.0]; // BGR
-    let bottom: [f64; 3] = [28.0, 22.0, 18.0];
-    let data = m.data_bytes_mut()?;
-    let row_bytes = w as usize * 3;
-    for y in 0..h as usize {
-        let t = if h > 1 { y as f64 / (h as usize - 1) as f64 } else { 0.0 };
-        let px = [
-            (top[0] + (bottom[0] - top[0]) * t) as u8,
-            (top[1] + (bottom[1] - top[1]) * t) as u8,
-            (top[2] + (bottom[2] - top[2]) * t) as u8,
-        ];
-        for c in data[y * row_bytes..(y + 1) * row_bytes].chunks_exact_mut(3) {
-            c[0] = px[0];
-            c[1] = px[1];
-            c[2] = px[2];
-        }
-    }
-    Ok(m)
+    Mat::new_rows_cols_with_default(
+        h as i32,
+        w as i32,
+        CV_8UC3,
+        Scalar::new(0.0, 0x32 as f64, 0.0, 0.0),
+    )
+    .context("allocate background")
 }
 
 #[cfg(test)]
@@ -276,17 +264,18 @@ mod tests {
     }
 
     #[test]
-    fn default_background_is_a_vertical_gradient() {
+    fn default_background_is_solid_003200() {
         let bg = default_background(8, 4).unwrap();
         assert_eq!(bg.cols(), 8);
         assert_eq!(bg.rows(), 4);
         assert_eq!(bg.channels(), 3);
-        let d = bg.data_bytes().unwrap();
-        let px = |y: usize| &d[y * 8 * 3..y * 8 * 3 + 3];
-        assert_eq!(px(0), &[70, 52, 40], "top row should be the top color");
-        assert_eq!(px(3), &[28, 22, 18], "bottom row should be the bottom color");
-        for c in 0..3 {
-            assert!(px(0)[c] > px(3)[c], "channel {c} should decrease downwards");
-        }
+        // #003200 RGB == BGR (0, 50, 0) because R and B are both zero.
+        assert!(
+            bg.data_bytes()
+                .unwrap()
+                .chunks_exact(3)
+                .all(|px| px == [0, 50, 0]),
+            "every pixel should be #003200"
+        );
     }
 }

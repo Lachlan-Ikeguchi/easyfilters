@@ -64,7 +64,7 @@ and feathered mask edges:
 ```sh
 ./target/release/easyfilters --mode blur                          # background Gaussian-blurred
 ./target/release/easyfilters --mode blur --blur-strength 25        # stronger blur (sigma at 720p)
-./target/release/easyfilters --mode replace                       # background = generated gradient
+./target/release/easyfilters --mode replace                       # background = solid #003200
 ./target/release/easyfilters --mode replace --background ~/Pictures/bg.jpg
 ./target/release/easyfilters --self-test frame.jpg                 # also writes blur.png + replace.png
 ```
