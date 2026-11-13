@@ -3,11 +3,13 @@
 //! capture/segment/composite pipeline. Without a display (or with --no-gui)
 //! it runs the pipeline headless with the previous CLI behavior.
 
+mod autostart;
 mod composite;
 mod config;
 mod frame;
 mod gaze;
 mod gui;
+mod lock;
 mod pipeline;
 mod segmentation;
 mod settings;
@@ -51,7 +53,7 @@ fn install_signal_handlers() {
 #[derive(Parser)]
 #[command(
     name = "easyfilters",
-    about = "Virtual camera with background filters (milestone 4: GUI + tray + config; --no-gui for headless)"
+    about = "Virtual camera with background filters (GUI + tray + config; milestone 6: close-to-tray, --start-minimized, autostart; --no-gui for headless)"
 )]
 struct Args {
     /// Input camera device (default: auto-detect first uvcvideo capture node)
@@ -115,6 +117,16 @@ struct Args {
     /// Config file path (default: $XDG_CONFIG_HOME/easyfilters/config.toml)
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Milestone 6: start with the GUI window hidden (tray only); filtering
+    /// keeps running. Sets `start_minimized` for this run (beats the config)
+    #[arg(long)]
+    start_minimized: bool,
+    /// Milestone 6: write the XDG autostart entry (~/.config/autostart/easyfilters.desktop) and exit
+    #[arg(long)]
+    install_autostart: bool,
+    /// Milestone 6: remove the XDG autostart entry and exit
+    #[arg(long)]
+    uninstall_autostart: bool,
 }
 
 struct Resolved {
@@ -142,6 +154,11 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
     } else {
         cfg.gaze_correction
     };
+    let start_minimized = if args.start_minimized {
+        Some(true)
+    } else {
+        cfg.start_minimized
+    };
     Resolved {
         settings: Settings {
             enabled: enabled.unwrap_or(true),
@@ -151,6 +168,8 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             background: args.background.clone().or_else(|| cfg.background.clone()),
             gaze_correction: gaze.unwrap_or(false),
             gaze_strength: args.gaze_strength.or(cfg.gaze_strength).unwrap_or(0.5),
+            close_to_tray: cfg.close_to_tray.unwrap_or(true),
+            start_minimized: start_minimized.unwrap_or(false),
         },
         device: DeviceParams {
             input: args.input.clone().or_else(|| cfg.input.clone()),
@@ -271,6 +290,48 @@ fn run(args: Args) -> Result<()> {
     if let Some(p) = &args.self_test {
         return self_test(p, &resolved);
     }
+
+    // Milestone 6: autostart management short-circuits before any device or
+    // lock handling.
+    if args.install_autostart || args.uninstall_autostart {
+        let exe = std::env::current_exe().context("resolve current exe")?;
+        let dir = autostart::default_dir();
+        if args.install_autostart {
+            let p = autostart::install_at(&dir, &exe)?;
+            println!("installed autostart entry: {}", p.display());
+        }
+        if args.uninstall_autostart {
+            if autostart::uninstall_at(&dir)? {
+                println!("removed autostart entry from {}", dir.display());
+            } else {
+                println!("no autostart entry in {}", dir.display());
+            }
+        }
+        return Ok(());
+    }
+
+    // Validate --format before touching any device (milestone 6): a bad
+    // fourcc used to surface only inside the pipeline's retry loop.
+    if let Some(f) = &resolved.device.format {
+        pipeline::parse_fourcc(f).with_context(|| format!("invalid --format {f:?}"))?;
+    }
+
+    // Milestone 6: single-instance lock. With autostart, a second manual
+    // launch would otherwise fail on the camera with a cryptic EBUSY.
+    let _lock = match lock::acquire() {
+        None => {
+            warn!("XDG_RUNTIME_DIR unset; skipping the single-instance lock");
+            None
+        }
+        Some(Err(e)) => return Err(e).context("acquire single-instance lock"),
+        Some(Ok(lock::Acquire::Busy(pid))) => {
+            let who = pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+            println!("easyfilters is already running{who}; exiting.");
+            info!(?pid, "another instance holds the lock; exiting");
+            return Ok(());
+        }
+        Some(Ok(lock::Acquire::Locked(l))) => Some(l),
+    };
 
     let shared = Arc::new(Shared::new(resolved.settings, resolved.device));
     let want_gui = !args.no_gui && display_available();
@@ -396,6 +457,34 @@ mod tests {
         assert_eq!(
             resolve(&args, &cfg).device.face_model,
             Some(PathBuf::from("/tmp/cfg.onnx"))
+        );
+    }
+
+    #[test]
+    fn resolve_background_flags_and_defaults() {
+        // default: close_to_tray on, start_minimized off
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        let r = resolve(&args, &Config::default());
+        assert!(r.settings.close_to_tray);
+        assert!(!r.settings.start_minimized);
+        // config wins over default
+        let cfg = Config {
+            close_to_tray: Some(false),
+            start_minimized: Some(true),
+            ..Default::default()
+        };
+        let r = resolve(&args, &cfg);
+        assert!(!r.settings.close_to_tray);
+        assert!(r.settings.start_minimized);
+        // --start-minimized beats the config
+        let args = Args::try_parse_from(["easyfilters", "--start-minimized"]).unwrap();
+        assert!(resolve(&args, &Config::default()).settings.start_minimized);
+        // --background still means the background image path (no collision)
+        let args =
+            Args::try_parse_from(["easyfilters", "--background", "/tmp/bg.jpg"]).unwrap();
+        assert_eq!(
+            resolve(&args, &Config::default()).settings.background,
+            Some(PathBuf::from("/tmp/bg.jpg"))
         );
     }
 }

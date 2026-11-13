@@ -71,6 +71,12 @@ pub struct Settings {
     pub gaze_correction: bool,
     /// Gaze shift scale, 0..=1 (the absolute pixel cap applies on top).
     pub gaze_strength: f32,
+    /// Milestone 6: closing the GUI window hides it to the tray instead of
+    /// quitting (filtering keeps running; tray "Quit" still stops the app).
+    pub close_to_tray: bool,
+    /// Milestone 6: start with the window hidden (tray only). `--background`
+    /// sets this for one run; the config can persist it.
+    pub start_minimized: bool,
 }
 
 impl Default for Settings {
@@ -83,6 +89,8 @@ impl Default for Settings {
             background: None,
             gaze_correction: false,
             gaze_strength: 0.5,
+            close_to_tray: true,
+            start_minimized: false,
         }
     }
 }
@@ -148,6 +156,10 @@ pub struct Stats {
     pub encode_ms: f64,
     /// Milestone 5 gaze stage.
     pub gaze_ms: f64,
+    /// Milestone 6: the format actually negotiated with the input camera
+    /// (width, height, fps) — shown in the GUI status line. Set once per
+    /// stream (after `negotiate`), carried by the 2 s stats write.
+    pub negotiated: Option<(u32, u32, f64)>,
 }
 
 /// The single source of truth shared by all threads. `running` is backed by
@@ -166,10 +178,15 @@ pub struct Shared {
     pub preview: Mutex<Option<PreviewFrame>>,
     pub preview_on: AtomicBool,
     pub stats: Mutex<Stats>,
+    /// Milestone 6: tray -> GUI "show/hide the window" requests. The GUI
+    /// watches edges of this on its tick and applies `window::set_mode`.
+    /// Initialized from `!settings.start_minimized`.
+    pub show_window: AtomicBool,
 }
 
 impl Shared {
     pub fn new(settings: Settings, device: DeviceParams) -> Self {
+        let show_window = !settings.start_minimized;
         Self {
             settings: RwLock::new(settings),
             device: RwLock::new(device),
@@ -178,6 +195,7 @@ impl Shared {
             preview: Mutex::new(None),
             preview_on: AtomicBool::new(false),
             stats: Mutex::new(Stats::default()),
+            show_window: AtomicBool::new(show_window),
         }
     }
 
@@ -230,6 +248,17 @@ mod tests {
             assert_eq!(v.as_str().unwrap(), m.to_string());
             assert_eq!(Mode::deserialize(v).unwrap(), m);
         }
+    }
+
+    #[test]
+    fn shared_show_window_reflects_start_minimized() {
+        let mut s = Settings::default();
+        assert!(!s.start_minimized);
+        assert!(Shared::new(s.clone(), DeviceParams::default()).show_window.load(Ordering::Relaxed));
+        s.start_minimized = true;
+        assert!(!Shared::new(s, DeviceParams::default()).show_window.load(Ordering::Relaxed));
+        // close_to_tray defaults to true (run-in-background behavior)
+        assert!(Settings::default().close_to_tray);
     }
 
     #[test]

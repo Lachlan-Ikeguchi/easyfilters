@@ -136,7 +136,7 @@ images.
 4. **GUI + tray + config**: full controls, persistent settings, tray toggle.
 5. **Gaze correction**: subtle, capped, landmark-based pupil shift (optional,
    opt-in) so the user appears to look at the camera — see `plan/milestone5.md`.
-6. **Polish**: run in the background (close-to-tray, `--background`,
+6. **Polish**: run in the background (close-to-tray, `--start-minimized`,
    single-instance lock), startup behavior (launch at login), packaging
    (`.desktop` + icon, NixOS autostart), any leftover
    resolution/fps/camera-selection rough edges — see `plan/milestone6.md`.

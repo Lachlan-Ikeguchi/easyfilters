@@ -6,7 +6,7 @@ edges.** Concretely, three pillars:
 
 1. **Run in the background** — closing the GUI window hides it to the tray
    instead of quitting (the filtering keeps running; the tray is the control
-   surface), plus a `--background` start-minimized mode and a
+   surface), plus a `--start-minimized` start-minimized mode and a
    single-instance lock so autostart + manual launch don't fight over the
    camera.
 2. **Launch at login** — XDG autostart installed via
@@ -47,8 +47,8 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
     is closed, hide it to the tray instead of quitting; filtering keeps
     running. Tray "Quit" (and SIGINT/SIGTERM) still stop everything.
   - `Settings.start_minimized: bool`, default **false** — start with the
-    window hidden (tray only). CLI: `--background` sets it for this run
-    (CLI > config, like the gaze flags: `--background` = `Some(true)`).
+    window hidden (tray only). CLI: `--start-minimized` sets it for this run
+    (CLI > config, like the gaze flags: `--start-minimized` = `Some(true)`).
   - Config: `close_to_tray = true`, `start_minimized = false`
     (`#[serde(default)]` optionals). GUI: a "Close to tray" `toggler`.
 - **GUI mechanics (iced 0.14):**
@@ -63,7 +63,7 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
     label is updated via `tray.set_menu_item_label`-style API if ksni exposes
     it, otherwise a static "Show/Hide window" label is fine.
   - `--no-gui` headless is unchanged (no window, no tray) — it already *is*
-    the server/background mode; `--background` is the desktop equivalent with
+    the server/background mode; `--start-minimized` is the desktop equivalent with
     a tray.
 - **Single-instance lock (`src/lock.rs`):** with autostart, a second manual
   launch would fail on the camera with a cryptic EBUSY. Take a non-blocking
@@ -84,7 +84,7 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
   [Desktop Entry]
   Type=Application
   Name=EasyFilters
-  Exec=<current exe> --background
+  Exec=<current exe> --start-minimized
   Icon=easyfilters
   X-GNOME-Autostart-enabled=true
   ```
@@ -94,7 +94,7 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
 - **NixOS module (`flake.nix`):** new `easyfilters.autostart` bool option
   (default false). When true, add a systemd user service:
   `systemd.user.services.easyfilters` — `ExecStart = <package>/bin/easyfilters
-  --background`, `WantedBy = [ "graphical-session.target" ]`, restart on
+  --start-minimized`, `WantedBy = [ "graphical-session.target" ]`, restart on
   failure. (XDG autostart from the package would also work via
   `xdg.autostart.enable`, but the unit is explicit and logs to the journal.)
   Doc note: the user still needs the `video` group for `/dev/video*`.
@@ -132,7 +132,7 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
 1. `plan/milestone6.md` (this file) + `docs/idea.md` milestone-6 line points
    at it — commit as docs.
 2. `src/settings.rs` / `src/config.rs` / `main.rs` — `close_to_tray`,
-   `start_minimized`, `--background`, resolve precedence + serde roundtrip
+   `start_minimized`, `--start-minimized`, resolve precedence + serde roundtrip
    tests. Commit.
 3. `src/lock.rs` + `src/autostart.rs` — flock single-instance (skip for
    `--list`/`--self-test`), autostart install/uninstall with tmp-path unit
@@ -146,7 +146,7 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
    install desktop file + icon, version 0.2.0, `checks.default` asserts the
    files; NixOS module `autostart` option (systemd user service). `nix build`
    + `nix flake check` green. Commit.
-7. Verify (below) — close-to-tray live on Xwayland `:1`, `--background`,
+7. Verify (below) — close-to-tray live on Xwayland `:1`, `--start-minimized`,
    autostart file, double-launch lock, `--no-gui` regression. README
    milestone-6 section + findings appended here. Commit.
 
@@ -161,10 +161,10 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
   still filtered, tray "Show window" re-opens it (screenshot), tray "Quit"
   stops the pipeline cleanly (exit 0, stats log stops). With
   `close_to_tray = false` in the config, closing the window quits as in M4.
-- `--background`: no window appears, tray icon registers (SNI watcher via
+- `--start-minimized`: no window appears, tray icon registers (SNI watcher via
   `busctl --user`), feed on `/dev/video0` is filtered.
 - `--install-autostart` writes `~/.config/autostart/easyfilters.desktop` with
-  `Exec=<exe> --background`; re-running is idempotent; `--uninstall-autostart`
+  `Exec=<exe> --start-minimized`; re-running is idempotent; `--uninstall-autostart`
   removes it. NixOS module with `autostart = true` evaluates
   (`nix eval`) and the unit is a user service wanted by
   `graphical-session.target`.

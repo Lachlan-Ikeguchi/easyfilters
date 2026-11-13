@@ -21,6 +21,10 @@ pub struct Config {
     pub background: Option<PathBuf>,
     pub gaze_correction: Option<bool>,
     pub gaze_strength: Option<f32>,
+    /// Milestone 6: close the GUI window to the tray instead of quitting.
+    pub close_to_tray: Option<bool>,
+    /// Milestone 6: start with the window hidden (tray only).
+    pub start_minimized: Option<bool>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub width: Option<u32>,
@@ -85,6 +89,8 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         background: s.background.clone(),
         gaze_correction: Some(s.gaze_correction),
         gaze_strength: Some(s.gaze_strength),
+        close_to_tray: Some(s.close_to_tray),
+        start_minimized: Some(s.start_minimized),
         input: d.input.clone(),
         output: d.output.clone(),
         width: Some(d.width),
@@ -145,6 +151,8 @@ mod tests {
             background: Some(PathBuf::from("/tmp/bg.jpg")),
             gaze_correction: Some(true),
             gaze_strength: Some(0.75),
+            close_to_tray: Some(false),
+            start_minimized: Some(true),
             input: Some(PathBuf::from("/dev/video1")),
             output: Some(PathBuf::from("/dev/video0")),
             width: Some(1920),
