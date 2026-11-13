@@ -44,6 +44,17 @@ pub fn run(shared: Arc<Shared>, config_path: PathBuf) -> iced::Result {
     .run()
 }
 
+/// Whether winit will use its native Wayland backend (it prefers Wayland
+/// whenever WAYLAND_DISPLAY is set). On native Wayland, winit's
+/// `set_visible` is a no-op, so "hide the window" has to minimize instead —
+/// and since Wayland can't un-minimize via winit, "show" recreates the
+/// window (milestone 6 fix for close-to-tray on Wayland sessions).
+fn native_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+}
+
 struct App {
     shared: Arc<Shared>,
     config_path: PathBuf,
@@ -60,6 +71,7 @@ struct App {
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
     window_visible: bool,
+    native_wayland: bool,
     background_text: String,
     // Device controls (applied via "Apply" -> stream restart).
     input_text: String,
@@ -112,6 +124,7 @@ impl App {
             close_to_tray: s.close_to_tray,
             window_id: None,
             window_visible: !s.start_minimized,
+            native_wayland: native_wayland(),
             background_text: s
                 .background
                 .as_ref()
@@ -145,6 +158,33 @@ impl App {
         }
         if let Err(e) = config::save_current(&self.config_path, &self.shared) {
             self.status = format!("config save failed: {e}");
+        }
+    }
+
+    /// Hide the window. On X11 `Mode::Hidden` really hides it; on native
+    /// Wayland `set_visible` is a no-op in winit, so minimize instead.
+    fn hide_task(&self, id: window::Id) -> Task<Message> {
+        if self.native_wayland {
+            window::minimize(id, true)
+        } else {
+            window::set_mode(id, window::Mode::Hidden)
+        }
+    }
+
+    /// Show the window. On X11 flip the mode back to Windowed; on Wayland
+    /// minimizing is one-way (winit ignores un-minimize), so close the
+    /// minimized window and open a fresh visible one.
+    fn show_task(&mut self, id: window::Id) -> Task<Message> {
+        if self.native_wayland {
+            let (_new_id, open_task) = window::open(window::Settings {
+                size: Size::new(1024.0, 600.0),
+                visible: true,
+                exit_on_close_request: false,
+                ..Default::default()
+            });
+            Task::batch([open_task.map(Message::WindowId), window::close(id)])
+        } else {
+            window::set_mode(id, window::Mode::Windowed)
         }
     }
 
@@ -190,19 +230,16 @@ impl App {
                 }
                 self.stats = *self.shared.stats.lock().unwrap();
                 // Milestone 6: tray "Show/Hide window" flips `show_window`;
-                // apply it as a window mode change on the edge.
+                // apply it as a hide/show on the edge.
                 let want_visible = self.shared.show_window.load(Ordering::Relaxed);
                 if want_visible != self.window_visible {
                     self.window_visible = want_visible;
                     if let Some(id) = self.window_id {
-                        return window::set_mode(
-                            id,
-                            if want_visible {
-                                window::Mode::Windowed
-                            } else {
-                                window::Mode::Hidden
-                            },
-                        );
+                        return if want_visible {
+                            self.show_task(id)
+                        } else {
+                            self.hide_task(id)
+                        };
                     }
                 }
                 Task::none()
@@ -214,13 +251,20 @@ impl App {
                     // "Show/Hide window" item brings the window back.
                     self.window_visible = false;
                     self.shared.show_window.store(false, Ordering::Relaxed);
-                    window::set_mode(id, window::Mode::Hidden)
+                    self.hide_task(id)
                 } else {
                     iced::exit()
                 }
             }
             Message::WindowId(id) => {
+                let was_unknown = self.window_id.is_none();
                 self.window_id = Some(id);
+                // On native Wayland `visible: false` at creation is a no-op
+                // (winit set_visible), so apply the start-minimized hide once
+                // we know the window id.
+                if was_unknown && !self.window_visible {
+                    return self.hide_task(id);
+                }
                 Task::none()
             }
             Message::CloseToTrayToggled(v) => {
@@ -340,8 +384,10 @@ impl App {
             time::every(Duration::from_millis(33)).map(|_| Message::Tick),
             // Milestone 6: close requests (handled above, not auto-exit).
             window::close_requests().map(Message::CloseRequested),
-            // Capture the window id from the initial resize event so the
-            // tray-driven show/hide on Tick can address it.
+            // Capture the window id (open + resize events) so the
+            // tray-driven show/hide on Tick can address it — open_events
+            // fires for the initial window even when created hidden.
+            window::open_events().map(Message::WindowId),
             window::resize_events().map(|(id, _)| Message::WindowId(id)),
         ])
     }

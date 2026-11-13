@@ -254,3 +254,42 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
   itself was confirmed via `busctl --user list`; the Show/Hide flip and the
   GUI edge handling are unit-tested, and close-to-tray was verified live
   via `wmctrl -c`.
+
+## Post-reboot bugfix (2026-11-13, reported after testing autostart)
+
+Two real bugs found when testing on a native KDE Wayland session:
+
+- **Close-to-tray was a no-op on native Wayland.** winit 0.30's Wayland
+  backend implements `set_visible` as a no-op (only X11 honors it), so
+  `window::set_mode(id, Mode::Hidden)` left the window open — "the window
+  does not close". Fix in `gui.rs`: on native Wayland
+  (`WAYLAND_DISPLAY` set, which is how winit picks its backend),
+  close-to-tray now **minimizes** (`window::minimize(id, true)`, which
+  Wayland does support), and tray "Show window" **recreates** the window
+  (`window::open` + `window::close(old)`, since winit ignores un-minimize
+  on Wayland). On X11 the hide/show path is unchanged. Also fixed a latent
+  bug: the window id is now captured from `window::open_events()` (fires
+  for the initial window even when created hidden) in addition to
+  `resize_events`, so `--start-minimized` + tray "Show window" works on
+  X11 too (a hidden window emits no resize).
+- **Autostart could crash at login.** If the autostart entry points at the
+  raw cargo binary (`target/release/easyfilters`), it runs without the dev
+  shell's `LD_LIBRARY_PATH`; winit then panics at startup (missing
+  libX11 / XOpenDisplayFailed) and the process died — filtering stopped.
+  Fixes: (1) `main.rs` wraps `gui::run` in `catch_unwind` — a GUI startup
+  panic now logs `GUI failed to start; continuing headless…` and the app
+  keeps filtering with the tray as control surface (verified live: raw
+  binary with stripped env → panic caught, tray registered, pipeline
+  29.8 fps / 0 drops); (2) `--install-autostart` warns when the current
+  exe is under `/target/` and recommends the nix-wrapped binary
+  (`nix build` → `./result/bin/easyfilters --install-autostart`), which
+  carries the runtime libs + model paths in its wrapper.
+- Verified live after the fix: wrapped binary standalone (stripped env,
+  Xwayland `:1`) opens the window and close-to-tray hides it
+  (`wmctrl -c`, process alive, feed at 29.8 fps); native Wayland
+  (`WAYLAND_DISPLAY=wayland-1`) starts without panic with
+  `--start-minimized`, tray registered, 29.7–29.8 fps / 0 drops. The
+  Wayland close→minimize click itself couldn't be triggered in this
+  sandbox (no input injection / KWin window activation), but the winit
+  behavior is confirmed in the vendored source (`set_visible` no-op,
+  `set_minimized(true)` implemented). `cargo test --release`: 81 passed.

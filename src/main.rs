@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -295,6 +295,14 @@ fn run(args: Args) -> Result<()> {
     // lock handling.
     if args.install_autostart || args.uninstall_autostart {
         let exe = std::env::current_exe().context("resolve current exe")?;
+        if args.install_autostart && exe.to_string_lossy().contains("/target/") {
+            warn!(
+                exe = %exe.display(),
+                "installing autostart from a raw cargo binary; outside `nix develop` it may \
+                 lack the runtime libs on LD_LIBRARY_PATH (GUI can fail to start). Prefer the \
+                 nix-wrapped binary: `nix build` then `./result/bin/easyfilters --install-autostart`"
+            );
+        }
         let dir = autostart::default_dir();
         if args.install_autostart {
             let p = autostart::install_at(&dir, &exe)?;
@@ -349,11 +357,40 @@ fn run(args: Args) -> Result<()> {
             }
         });
         tray::spawn(shared.clone(), config_path.clone());
-        let gui_result = gui::run(shared.clone(), config_path);
-        // Window closed or tray quit: stop the pipeline and wait for it.
-        shared.stop();
-        let _ = pipe.join();
-        gui_result.map_err(|e| anyhow::anyhow!("gui exited with error: {e}"))
+        // Milestone 6: never let a GUI startup failure kill the process —
+        // autostart entries run at login where a panic (e.g. missing X11
+        // libs when launched outside `nix develop` / the wrapped binary)
+        // would otherwise stop filtering entirely. Fall back to headless.
+        let gui_shared = shared.clone();
+        let gui_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gui::run(gui_shared, config_path)
+        }));
+        match gui_result {
+            Ok(res) => {
+                // Window closed or tray quit: stop the pipeline and wait for it.
+                shared.stop();
+                let _ = pipe.join();
+                res.map_err(|e| anyhow::anyhow!("gui exited with error: {e}"))
+            }
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                error!(
+                    panic = %msg,
+                    "GUI failed to start; continuing headless so filtering keeps running \
+                     (control via tray). For GUI support run the nix-wrapped binary \
+                     (./result/bin/easyfilters) or inside `nix develop`"
+                );
+                while shared.running() {
+                    thread::sleep(Duration::from_millis(200));
+                }
+                let _ = pipe.join();
+                Ok(())
+            }
+        }
     } else {
         pipeline::run(shared)
     }

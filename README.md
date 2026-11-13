@@ -182,9 +182,17 @@ window hidden (tray only) via `--start-minimized`:
 Launch at login via an XDG autostart entry:
 
 ```sh
-./target/release/easyfilters --install-autostart     # writes ~/.config/autostart/easyfilters.desktop
-./target/release/easyfilters --uninstall-autostart   # removes it
+nix build && ./result/bin/easyfilters --install-autostart   # writes ~/.config/autostart/easyfilters.desktop
+./result/bin/easyfilters --uninstall-autostart
 ```
+
+Use the **nix-wrapped** binary (`./result/bin/easyfilters`) for autostart:
+the raw `target/release/easyfilters` only works inside `nix develop`
+(runtime libs on `LD_LIBRARY_PATH`); outside it the GUI can fail to start
+— in that case the app now logs the error and keeps filtering headless
+instead of dying. Note: on native Wayland, closing the window *minimizes*
+it to the tray (Wayland windows can't be hidden, only minimized; tray
+"Show window" reopens it), while on X11/Xwayland it is truly hidden.
 
 On NixOS, `easyfilters.autostart = true;` in the flake's module starts the
 package as a systemd user service (`--start-minimized`) at graphical login
