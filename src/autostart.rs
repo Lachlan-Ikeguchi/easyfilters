@@ -23,6 +23,25 @@ pub fn default_dir() -> PathBuf {
     base.join("autostart")
 }
 
+/// makeWrapper installs the real ELF as `.<name>-wrapped` and a shell script
+/// as `<name>`; on Linux `current_exe()` (/proc/self/exe) resolves to the
+/// *inner* binary after the wrapper `exec`s it. Rewrite the path to the
+/// wrapper script so the autostart entry keeps the wrapper's env
+/// (EASYFILTERS_* model paths, LD_LIBRARY_PATH). Pure rename; the caller
+/// falls back to the original path if the wrapper doesn't exist.
+pub fn wrapper_path(exe: &Path) -> PathBuf {
+    match exe.file_name().and_then(|n| n.to_str()) {
+        Some(name) => match name
+            .strip_prefix('.')
+            .and_then(|s| s.strip_suffix("-wrapped"))
+        {
+            Some(stem) if stem == "easyfilters" => exe.with_file_name(stem),
+            _ => exe.to_path_buf(),
+        },
+        None => exe.to_path_buf(),
+    }
+}
+
 /// The `.desktop` file content. `Exec` uses the absolute path of the running
 /// binary with `--start-minimized` (tray only — filtering still runs).
 pub fn desktop_entry(exe: &Path) -> String {
@@ -115,5 +134,23 @@ mod tests {
     fn default_dir_is_under_config_home() {
         let d = default_dir();
         assert!(d.ends_with("autostart"));
+    }
+
+    #[test]
+    fn wrapper_path_rewrites_inner_binary_to_wrapper() {
+        // nix makeWrapper layout: bin/easyfilters (script) + bin/.easyfilters-wrapped (ELF)
+        assert_eq!(
+            wrapper_path(Path::new("/nix/store/abc-easyfilters-0.2.0/bin/.easyfilters-wrapped")),
+            PathBuf::from("/nix/store/abc-easyfilters-0.2.0/bin/easyfilters")
+        );
+        // a plain (non-wrapped) binary is left alone
+        assert_eq!(
+            wrapper_path(Path::new("/home/u/easyfilters/target/release/easyfilters")),
+            PathBuf::from("/home/u/easyfilters/target/release/easyfilters")
+        );
+        assert_eq!(
+            wrapper_path(Path::new("/usr/bin/easyfilters")),
+            PathBuf::from("/usr/bin/easyfilters")
+        );
     }
 }

@@ -294,7 +294,15 @@ fn run(args: Args) -> Result<()> {
     // Milestone 6: autostart management short-circuits before any device or
     // lock handling.
     if args.install_autostart || args.uninstall_autostart {
-        let exe = std::env::current_exe().context("resolve current exe")?;
+        let raw_exe = std::env::current_exe().context("resolve current exe")?;
+        // /proc/self/exe resolves to the inner .easyfilters-wrapped when run
+        // via the nix wrapper script — point the entry at the wrapper instead.
+        let wrapper = autostart::wrapper_path(&raw_exe);
+        let exe = if wrapper != raw_exe && wrapper.exists() {
+            wrapper
+        } else {
+            raw_exe
+        };
         if args.install_autostart && exe.to_string_lossy().contains("/target/") {
             warn!(
                 exe = %exe.display(),
