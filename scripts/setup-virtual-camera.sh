@@ -13,6 +13,11 @@
 #   --exclusive-caps 0|1  0 = visible to both PipeWire and V4L2 apps (default)
 #                         1 = visible to V4L2 apps only (Discord/Chrome style)
 #   --video-nr N          pin the /dev/videoN number (-1 = auto, default)
+#   --max-buffers N       v4l2loopback max_buffers option (default: 6)
+#                         0.15.x grants exactly max_buffers mmap buffers per
+#                         REQBUFS regardless of the count requested, so this
+#                         must cover apps demanding an exact buffer count
+#                         (cameractrls preview: 6)
 #   --status              show current state, no changes (no root needed)
 #   --uninstall           remove the config files and unload the module
 #   --dry-run             print what would be done, change nothing
@@ -24,19 +29,21 @@ set -euo pipefail
 LABEL="${EASYFILTERS_LABEL:-EasyFilters Virtual Camera}"
 EXCLUSIVE_CAPS="${EASYFILTERS_EXCLUSIVE_CAPS:-0}"
 VIDEO_NR="${EASYFILTERS_VIDEO_NR:--1}"
+MAX_BUFFERS="${EASYFILTERS_MAX_BUFFERS:-6}"
 DRY_RUN=0
 ACTION=setup
 
 MODPROBE_CONF=/etc/modprobe.d/99-easyfilters-v4l2loopback.conf
 LOAD_CONF=/etc/modules-load.d/easyfilters-v4l2loopback.conf
 
-usage() { sed -n '2,20p' "$0"; }
+usage() { sed -n '2,24p' "$0"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --label)          LABEL="$2"; shift 2 ;;
     --exclusive-caps) EXCLUSIVE_CAPS="$2"; shift 2 ;;
     --video-nr)       VIDEO_NR="$2"; shift 2 ;;
+    --max-buffers)    MAX_BUFFERS="$2"; shift 2 ;;
     --status)         ACTION=status; shift ;;
     --uninstall)      ACTION=uninstall; shift ;;
     --dry-run)        DRY_RUN=1; shift ;;
@@ -99,12 +106,12 @@ install_package() {
 write_configs() {
   echo "+ writing $MODPROBE_CONF"
   if [[ $DRY_RUN -eq 1 ]]; then
-    echo "  options v4l2loopback exclusive_caps=$EXCLUSIVE_CAPS card_label=\"$LABEL\" video_nr=$VIDEO_NR"
+    echo "  options v4l2loopback exclusive_caps=$EXCLUSIVE_CAPS card_label=\"$LABEL\" video_nr=$VIDEO_NR max_buffers=$MAX_BUFFERS"
     echo "+ writing $LOAD_CONF"
     echo "  v4l2loopback"
   else
-    printf 'options v4l2loopback exclusive_caps=%s card_label="%s" video_nr=%s\n' \
-      "$EXCLUSIVE_CAPS" "$LABEL" "$VIDEO_NR" > "$MODPROBE_CONF"
+    printf 'options v4l2loopback exclusive_caps=%s card_label="%s" video_nr=%s max_buffers=%s\n' \
+      "$EXCLUSIVE_CAPS" "$LABEL" "$VIDEO_NR" "$MAX_BUFFERS" > "$MODPROBE_CONF"
     echo "v4l2loopback" > "$LOAD_CONF"
   fi
 }
@@ -132,6 +139,7 @@ show_status() {
   echo "module:        $(module_loaded && echo loaded || echo 'not loaded')"
   if [[ -d /sys/module/v4l2loopback/parameters ]]; then
     echo "exclusive_caps: $(cat /sys/module/v4l2loopback/parameters/exclusive_caps 2>/dev/null | cut -d, -f1)"
+    echo "max_buffers:    $(cat /sys/module/v4l2loopback/parameters/max_buffers 2>/dev/null | cut -d, -f1)"
     echo "module version: $(cat /sys/module/v4l2loopback/version 2>/dev/null)"
   fi
   if dev="$(find_device_by_label "$LABEL")"; then
