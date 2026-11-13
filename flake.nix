@@ -63,9 +63,14 @@
 
             postInstall = ''
               mkdir -p "$out/share/easyfilters"
-              cp assets/selfie_segmentation_landscape.onnx "$out/share/easyfilters/"
+              cp assets/selfie_segmentation_landscape.onnx \
+                 assets/face_landmarks_478.onnx \
+                 assets/blaze_face_short_range.onnx \
+                 "$out/share/easyfilters/"
               wrapProgram "$out/bin/easyfilters" \
                 --set-default EASYFILTERS_MODEL "$out/share/easyfilters/selfie_segmentation_landscape.onnx" \
+                --set-default EASYFILTERS_FACE_MODEL "$out/share/easyfilters/face_landmarks_478.onnx" \
+                --set-default EASYFILTERS_FACE_DETECTOR "$out/share/easyfilters/blaze_face_short_range.onnx" \
                 --prefix LD_LIBRARY_PATH : "${
                   pkgs.lib.makeLibraryPath [
                     pkgs.stdenv.cc.cc.lib

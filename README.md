@@ -138,6 +138,33 @@ wgpu/shaderc); the tray uses `tray-item`'s `ksni` feature, which links
 `PKG_CONFIG_PATH` to a `dbus-1.pc`). winit's wayland/x11 backends need
 `libwayland`/`libxkbcommon` at runtime — again provided by the flake.
 
+## Milestone 5: gaze correction (capped, opt-in pupil shift)
+
+Optional "eye contact" effect: MediaPipe BlazeFace (face detection) +
+Face Mesh V2 (478 landmarks incl. iris), both Apache-2.0 and bundled in
+`assets/`, find the face and each iris, and shift the iris texture a small,
+hard-capped amount toward the eye center / webcam — so in the virtual feed
+you appear to look at the camera. It is **off by default** (the one effect
+that can look uncanny), gated on roll/blink/face-size/presence/jitter, and
+capped at `min(0.25 * eye_width, 3.5 px * h/720)` per axis:
+
+```sh
+./target/release/easyfilters --no-gui --gaze                 # headless with gaze on
+./target/release/easyfilters --gaze --gaze-strength 0.8      # stronger (still capped)
+./target/release/easyfilters --no-gaze                       # force off (beats the config)
+./target/release/easyfilters --self-test frame.jpg           # also writes gaze.png + prints per-eye px shift
+```
+
+Config: `gaze_correction = true`, `gaze_strength = 0.5`. GUI: "Gaze
+correction" toggler + strength slider; tray: "Toggle gaze correction".
+`--face-model <path>` (or `EASYFILTERS_FACE_MODEL`) overrides the bundled
+face-mesh model. Applies to `overlay`/`blur`/`replace` (not `mask`/
+passthrough) and is copied through the person mask only.
+
+Measured at 1280x720@30 MJPG with gaze on: 29.8 fps, 0 drops,
+gaze stage ~4.3 ms/frame (detector every frame, mesh every 3rd, remap per
+frame) — same fps as milestone 4 with gaze off (gaze_ms = 0).
+
 ## Tests
 
 Unit tests use Rust's built-in test harness — no external framework needed:
@@ -164,7 +191,13 @@ Coverage today:
 - `src/settings.rs` — `Mode` clap/serde name agreement, preview-slot gating.
 - `src/config.rs` — TOML load/save roundtrip, atomic save, missing/malformed
   file handling, default path.
-- `src/tray.rs` — `toggle_filtering` flips the shared flag and persists it.
+- `src/tray.rs` — `toggle_filtering` / `toggle_gaze` flip the shared flags
+  and persist them.
+- `src/gaze.rs` — eye geometry from synthetic 478-landmark sets (centering,
+  direction, hard cap, strength scaling, roll/blink/jitter gates), EMA +
+  deadband smoother, `apply_shift` remap on a synthetic iris disc (moves the
+  disc, respects a zero mask, no-ops on tiny shifts), plus real inference
+  passes over both bundled face models.
 - `src/gui.rs` — device-field parsing (`WxH`).
 - `src/v4l2.rs` is not unit-tested: it drives real `/dev/video*` nodes.
   Exercise it via `--list` and `--self-test` instead.

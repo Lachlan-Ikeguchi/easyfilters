@@ -160,3 +160,53 @@ in release, single-threaded).
   variance gate skips unstable landmarks. No multi-face correction in M5.
 - **Debug builds** are ~40x slower on tract models — all live verification in
   `--release`, same as M2-M4.
+
+## Implementation findings (all verified live, 2026-11-13, release build)
+
+- **Model sourcing**: HF community ONNX exports (Apache-2.0, format-only
+  conversions of Google's models), bundled in `assets/` with provenance +
+  SHA-256 in `assets/LICENSE-mediapipe-face-models.txt`:
+  - `face_landmarks_478.onnx` (naklitechie/face-landmarks-onnx, SHA-256
+    matches the publisher's): input `input_12` [1,256,256,3] F32 **NHWC RGB
+    in [0,1]** (verified: presence sigmoid ~1.0 on a live face crop with
+    [0,1], ~0.3 with [-1,1]); outputs `Identity` [1,1,1,1434] = 478×(x,y,z)
+    **in crop pixels**, `Identity_1` presence logit, `Identity_2`. Symbolic
+    batch bound to 1 via the `Segmenter::load` set_symbols pattern.
+  - `blaze_face_short_range.onnx` (garavv/blazeface-onnx): inputs `image`
+    [1,3,128,128] F32 NCHW RGB **[-1,1]** (fires at conf 0.5 on live frames;
+    [0,255] finds nothing), `conf_threshold` [1] F32, `max_detections` [1]
+    I64, `iou_threshold` [1] F32; output `selectedBoxes` [1,N,16] with rows
+    **[y1, x1, y2, x2] corner-format** + 6 keypoints, normalized per axis —
+    center-format interpretation puts the box off the actual face (verified
+    against the mesh presence head on live frames).
+  - Face-crop rule: square side = max(box w,h) × 1.25 centered on the box
+    (1.1–1.3 all give mesh presence ≈ 1.0; 1.6+ drops it) — tighter/looser
+    crops verified live.
+- **opencv crate 0.102**: `Mat::roi` returns `BoxedRef<Mat>` which does NOT
+  implement `Deref` — pass ROIs to functions taking `&impl MatTraitConst`
+  (opencv ops) directly; only `&Mat`-typed helpers need a different path.
+  2-D `at_mut` is not generated; fill f32 maps via `data_bytes_mut` offsets.
+- **Self-test on a live 1280x720 frame** (user in profile): gaze shift left
+  (2.82, 0.38) px, right (3.50, 0.83) px — both at the 3.5 px 720p cap,
+  direction toward image center; eye crop before/after shows the pupil
+  visibly nearer the eye center in `gaze.png`.
+- **Live headless `--gaze` at 1280x720@30 on /dev/video0**: 29.8 fps, 0
+  drops, gaze_ms ≈ 4.2–4.5 (detector every frame + mesh every 3rd + remap;
+  under the ~5 ms risk threshold, so mesh stays at every 3rd frame), total
+  ~22 ms of the 33 ms budget. With gaze off (default): gaze_ms = 0.0, fps
+  29.7–29.8 — identical to M4 (regression clean).
+- **Config/CLI precedence live**: `gaze_correction = true` in the TOML
+  engages gaze (models load once, gaze_ms > 0); `--no-gaze` on the CLI
+  overrides it (gaze_ms = 0.0, models never load). `--gaze-strength` parser
+  rejects out-of-range values.
+- **GUI smoke test on Xwayland :1**: iced window created, "tray icon
+  registered" (now 3 menu items), pipeline at 29.7–29.9 fps with preview on;
+  gaze toggler + slider follow the same apply_and_save path as the M4
+  controls (unit-tested via `toggle_gaze`).
+- `cargo test --release`: 71 passed, 0 failed (17 new gaze tests: geometry,
+  gates, smoother, remap, real-model shapes). `nix build` + `nix flake
+  check` green; the flake package now ships all three ONNX models and sets
+  `EASYFILTERS_MODEL` / `EASYFILTERS_FACE_MODEL` / `EASYFILTERS_FACE_DETECTOR`.
+- Known limits: single largest face only; profile/occluded eyes rely on the
+  jitter + presence gates; the 128x128 detector input squashes aspect (box
+  mapping back per-axis handles it).
