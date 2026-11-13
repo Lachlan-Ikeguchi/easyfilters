@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use v4l2r::ioctl::Capabilities;
 use v4l2r::{bindings, PixelFormat, QueueType};
 
+use crate::gaze::GazeCorrector;
 use crate::segmentation::{Segmenter, MODEL_H, MODEL_W};
 use crate::settings::{DeviceParams, Mode, Shared, Stats};
 use crate::v4l2::{Device, Queue};
@@ -28,6 +29,10 @@ pub(crate) const DEFAULT_MODEL: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/selfie_segmentation_landscape.onnx"
 );
+pub(crate) const DEFAULT_FACE_MODEL: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/assets/face_landmarks_478.onnx");
+pub(crate) const DEFAULT_FACE_DETECTOR: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/assets/blaze_face_short_range.onnx");
 const JPEG_QUALITY: i32 = 80;
 
 /// CLI arg > $EASYFILTERS_MODEL > bundled model.
@@ -36,6 +41,23 @@ pub(crate) fn resolve_model(model: &Option<PathBuf>) -> PathBuf {
         .clone()
         .or_else(|| std::env::var("EASYFILTERS_MODEL").ok().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL))
+}
+
+/// CLI arg > $EASYFILTERS_FACE_MODEL > bundled face-mesh model.
+pub(crate) fn resolve_face_model(model: &Option<PathBuf>) -> PathBuf {
+    model
+        .clone()
+        .or_else(|| std::env::var("EASYFILTERS_FACE_MODEL").ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_FACE_MODEL))
+}
+
+/// $EASYFILTERS_FACE_DETECTOR > bundled BlazeFace detector (no CLI flag; the
+/// detector always ships bundled, the env var exists for the nix package).
+pub(crate) fn resolve_face_detector() -> PathBuf {
+    std::env::var("EASYFILTERS_FACE_DETECTOR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_FACE_DETECTOR))
 }
 
 pub(crate) fn now_timeval() -> bindings::timeval {
@@ -303,6 +325,7 @@ fn filter_frame(
     smoother_alpha: &mut f32,
     bg: &mut Option<Mat>,
     bg_loaded_gen: &mut u64,
+    gaze: &mut Option<GazeCorrector>,
     src: &[u8],
     w: u32,
     h: u32,
@@ -350,17 +373,12 @@ fn filter_frame(
     let infer = t.elapsed();
 
     let t = Instant::now();
-    let out_img = match s.mode {
-        Mode::Overlay => {
-            let mask_small = frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
-            let mask_full = frame::upscale_mask(&mask_small, w, h)?;
-            frame::render_overlay(&img, &mask_full)?
-        }
-        Mode::Mask => {
-            let mask_small = frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
-            let mask_full = frame::upscale_mask(&mask_small, w, h)?;
-            frame::render_mask(&mask_full)?
-        }
+    let mask_small = frame::mask_mat(&mask, MODEL_W as u32, MODEL_H as u32)?;
+    let hard_full = frame::upscale_mask(&mask_small, w, h)?;
+    // mask mode outputs the mask itself — no face to correct, gaze skips it.
+    let (mut out_img, gaze_mask) = match s.mode {
+        Mode::Overlay => (frame::render_overlay(&img, &hard_full)?, Some(hard_full)),
+        Mode::Mask => (frame::render_mask(&hard_full)?, None),
         Mode::Blur | Mode::Replace => {
             // Recreate the smoother when the alpha slider moved (state
             // resets; acceptable for a live control change).
@@ -370,7 +388,7 @@ fn filter_frame(
             }
             let soft = smoother.update(&mask);
             let mask_full = composite::feather_mask(soft, MODEL_W, MODEL_H, w, h)?;
-            match s.mode {
+            let out = match s.mode {
                 Mode::Blur => {
                     // blur_strength is expressed at 720p; scale with height.
                     let sigma = s.blur_strength * h as f64 / 720.0;
@@ -400,11 +418,35 @@ fn filter_frame(
                     composite::replace_and_composite(&img, bg.as_ref().unwrap(), &mask_full)?
                 }
                 _ => unreachable!(),
-            }
+            };
+            (out, Some(mask_full))
         }
         Mode::Passthrough => unreachable!(),
     };
     let composite_t = t.elapsed();
+
+    // Gaze correction (milestone 5): after composite, before encode/preview.
+    // Applies to overlay/blur/replace (mask mode has no face to correct).
+    let t = Instant::now();
+    let gaze_ms = if s.gaze_correction {
+        if let Some(gm) = gaze_mask.as_ref() {
+            if gaze.is_none() {
+                let det = resolve_face_detector();
+                let mesh = resolve_face_model(&shared.device.read().unwrap().face_model);
+                let loaded = GazeCorrector::load(&det, &mesh).with_context(|| {
+                    format!("load face models ({}, {})", det.display(), mesh.display())
+                })?;
+                info!(detector = %det.display(), mesh = %mesh.display(), "gaze models loaded");
+                *gaze = Some(loaded);
+            }
+            gaze.as_mut()
+                .unwrap()
+                .process(&img, &mut out_img, gm, s.gaze_strength)?;
+        }
+        ms(t.elapsed())
+    } else {
+        0.0
+    };
 
     let preview = if preview_on {
         Some(mat_to_rgba(&out_img)?)
@@ -421,6 +463,7 @@ fn filter_frame(
         infer_ms: ms(infer),
         composite_ms: ms(composite_t),
         encode_ms: ms(encode),
+        gaze_ms,
         ..Stats::default()
     };
     Ok(Some((jpeg, stats, preview)))
@@ -441,6 +484,7 @@ fn capture_loop(
     let mut smoother_alpha = 0.6f32;
     let mut bg: Option<Mat> = None;
     let mut bg_loaded_gen: u64 = u64::MAX;
+    let mut gaze: Option<GazeCorrector> = None;
 
     let mut out_inflight = vec![false; out_q.buffers.len()];
     let mut frames = 0u64;
@@ -488,6 +532,7 @@ fn capture_loop(
                         &mut smoother_alpha,
                         &mut bg,
                         &mut bg_loaded_gen,
+                        &mut gaze,
                         src,
                         w,
                         h,
@@ -537,6 +582,7 @@ fn capture_loop(
                 infer_ms = st.infer_ms,
                 composite_ms = st.composite_ms,
                 encode_ms = st.encode_ms,
+                gaze_ms = st.gaze_ms,
                 "stats"
             );
             frames = 0;
@@ -578,6 +624,18 @@ mod tests {
             return;
         }
         assert_eq!(resolve_model(&None), PathBuf::from(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn resolve_face_models_prefer_explicit_arg() {
+        let args = Some(PathBuf::from("/tmp/custom-face.onnx"));
+        assert_eq!(resolve_face_model(&args), PathBuf::from("/tmp/custom-face.onnx"));
+        if std::env::var_os("EASYFILTERS_FACE_MODEL").is_none() {
+            assert_eq!(resolve_face_model(&None), PathBuf::from(DEFAULT_FACE_MODEL));
+        }
+        if std::env::var_os("EASYFILTERS_FACE_DETECTOR").is_none() {
+            assert_eq!(resolve_face_detector(), PathBuf::from(DEFAULT_FACE_DETECTOR));
+        }
     }
 
     #[test]
