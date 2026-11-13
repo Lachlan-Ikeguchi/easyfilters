@@ -15,19 +15,30 @@ use iced::widget::image::Handle;
 use iced::widget::{
     button, column, container, image, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
+use iced::window;
 use iced::{application, time, Alignment, ContentFit, Element, Length, Size, Subscription, Task, Theme};
 
 use crate::settings::{Mode, Shared, Stats};
 use crate::config;
 
 pub fn run(shared: Arc<Shared>, config_path: PathBuf) -> iced::Result {
+    // Milestone 6: `--start-minimized` starts with the window hidden (tray
+    // only). Close requests are handled via the `close_requests` subscription
+    // so they can hide-to-tray instead of exiting (`exit_on_close_request =
+    // false` disables the runtime's default exit).
+    let start_minimized = shared.snapshot_settings().start_minimized;
     application(
         move || (App::new(shared.clone(), config_path.clone()), Task::none()),
         App::update,
         App::view,
     )
     .title("EasyFilters")
-    .window_size(Size::new(1024.0, 600.0))
+    .window(window::Settings {
+        size: Size::new(1024.0, 600.0),
+        visible: !start_minimized,
+        exit_on_close_request: false,
+        ..Default::default()
+    })
     .theme(Theme::Dark)
     .subscription(App::subscription)
     .run()
@@ -44,6 +55,11 @@ struct App {
     mask_smoothing: f32,
     gaze_correction: bool,
     gaze_strength: f32,
+    // Milestone 6: close the window to the tray instead of quitting.
+    close_to_tray: bool,
+    // Window bookkeeping for hide/show (tray "Show/Hide window").
+    window_id: Option<window::Id>,
+    window_visible: bool,
     background_text: String,
     // Device controls (applied via "Apply" -> stream restart).
     input_text: String,
@@ -65,6 +81,13 @@ enum Message {
     SmoothingChanged(f32),
     GazeToggled(bool),
     GazeStrengthChanged(f32),
+    CloseToTrayToggled(bool),
+    /// The window was asked to close (WM close button). Milestone 6:
+    /// hide to tray when `close_to_tray`, else quit.
+    CloseRequested(window::Id),
+    /// A window event carried an id we can use for `set_mode` (captured from
+    /// the initial resize event).
+    WindowId(window::Id),
     BackgroundChanged(String),
     BackgroundSubmit,
     InputChanged(String),
@@ -86,6 +109,9 @@ impl App {
             mask_smoothing: s.mask_smoothing,
             gaze_correction: s.gaze_correction,
             gaze_strength: s.gaze_strength,
+            close_to_tray: s.close_to_tray,
+            window_id: None,
+            window_visible: !s.start_minimized,
             background_text: s
                 .background
                 .as_ref()
@@ -115,6 +141,7 @@ impl App {
             s.mask_smoothing = self.mask_smoothing;
             s.gaze_correction = self.gaze_correction;
             s.gaze_strength = self.gaze_strength;
+            s.close_to_tray = self.close_to_tray;
         }
         if let Err(e) = config::save_current(&self.config_path, &self.shared) {
             self.status = format!("config save failed: {e}");
@@ -158,7 +185,47 @@ impl App {
                 if (s.gaze_strength - self.gaze_strength).abs() > 1e-6 {
                     self.gaze_strength = s.gaze_strength;
                 }
+                if s.close_to_tray != self.close_to_tray {
+                    self.close_to_tray = s.close_to_tray;
+                }
                 self.stats = *self.shared.stats.lock().unwrap();
+                // Milestone 6: tray "Show/Hide window" flips `show_window`;
+                // apply it as a window mode change on the edge.
+                let want_visible = self.shared.show_window.load(Ordering::Relaxed);
+                if want_visible != self.window_visible {
+                    self.window_visible = want_visible;
+                    if let Some(id) = self.window_id {
+                        return window::set_mode(
+                            id,
+                            if want_visible {
+                                window::Mode::Windowed
+                            } else {
+                                window::Mode::Hidden
+                            },
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::CloseRequested(id) => {
+                self.window_id = Some(id);
+                if self.close_to_tray {
+                    // Milestone 6: hide to the tray, keep filtering; the tray
+                    // "Show/Hide window" item brings the window back.
+                    self.window_visible = false;
+                    self.shared.show_window.store(false, Ordering::Relaxed);
+                    window::set_mode(id, window::Mode::Hidden)
+                } else {
+                    iced::exit()
+                }
+            }
+            Message::WindowId(id) => {
+                self.window_id = Some(id);
+                Task::none()
+            }
+            Message::CloseToTrayToggled(v) => {
+                self.close_to_tray = v;
+                self.apply_and_save();
                 Task::none()
             }
             Message::Toggled(v) => {
@@ -269,7 +336,14 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(Duration::from_millis(33)).map(|_| Message::Tick)
+        Subscription::batch([
+            time::every(Duration::from_millis(33)).map(|_| Message::Tick),
+            // Milestone 6: close requests (handled above, not auto-exit).
+            window::close_requests().map(Message::CloseRequested),
+            // Capture the window id from the initial resize event so the
+            // tray-driven show/hide on Tick can address it.
+            window::resize_events().map(|(id, _)| Message::WindowId(id)),
+        ])
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -290,8 +364,14 @@ impl App {
         };
 
         let st = self.stats;
+        // Milestone 6: show the actually-negotiated stream format (the camera
+        // may not support the requested WxH/fps).
+        let negotiated = match st.negotiated {
+            Some((w, h, fps)) => format!("  |  negotiated {w}x{h}@{fps:.0}"),
+            None => String::new(),
+        };
         let status = text(format!(
-            "{}  |  {:.1} fps, {} frames, {} drops  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
+            "{}  |  {:.1} fps, {} frames, {} drops{negotiated}  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
             self.status, st.fps, st.frames, st.drops, st.decode_ms, st.infer_ms, st.composite_ms, st.gaze_ms, st.encode_ms
         ))
         .size(12);
@@ -319,6 +399,9 @@ impl App {
                 slider(0.0..=1.0, self.mask_smoothing, Message::SmoothingChanged).step(0.01f32),
             ]
             .spacing(4),
+            toggler(self.close_to_tray)
+                .label("Close window to tray (keep filtering)")
+                .on_toggle(Message::CloseToTrayToggled),
             toggler(self.gaze_correction)
                 .label("Gaze correction (capped pupil shift)")
                 .on_toggle(Message::GazeToggled),

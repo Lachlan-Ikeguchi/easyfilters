@@ -1,11 +1,14 @@
 //! System tray icon (milestone 4): `tray-item` with the ksni backend — a
 //! pure-Rust StatusNotifierItem over D-Bus, so no gtk3/libappindicator system
 //! libraries are needed and it works on any SNI host (KDE Plasma, COSMIC, …).
-//! Menu: toggle filtering on/off (persisted to the config), quit. Failure to
-//! register (no StatusNotifierWatcher on the session bus) is a warning, never
-//! fatal.
+//! Menu: toggle filtering on/off (persisted to the config), toggle gaze
+//! correction, show/hide the GUI window (milestone 6 — this is what makes
+//! "run in the background" usable: close the window and the tray keeps the
+//! app alive), quit. Failure to register (no StatusNotifierWatcher on the
+//! session bus) is a warning, never fatal.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -93,6 +96,17 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             warn!(error = %e, "tray: could not add gaze toggle item");
         }
 
+        // Milestone 6: show/hide the GUI window. The GUI watches edges of
+        // `show_window` on its tick and applies `window::set_mode`.
+        let win_shared = shared.clone();
+        if let Err(e) = tray.add_menu_item("Show/Hide window", move || {
+            let visible = !win_shared.show_window.load(Ordering::Relaxed);
+            win_shared.show_window.store(visible, Ordering::Relaxed);
+            info!(visible, "tray: show/hide window");
+        }) {
+            warn!(error = %e, "tray: could not add show/hide item");
+        }
+
         let quit_shared = shared.clone();
         if let Err(e) = tray.add_menu_item("Quit", move || {
             info!("tray: quit requested");
@@ -134,6 +148,16 @@ mod tests {
         assert_eq!(crate::config::load(&path).unwrap().enabled, Some(true));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn show_hide_window_flips_the_atomic() {
+        let shared = Shared::new(Settings::default(), DeviceParams::default());
+        assert!(shared.show_window.load(Ordering::Relaxed)); // visible by default
+        // same flip the tray menu item performs
+        let v = !shared.show_window.load(Ordering::Relaxed);
+        shared.show_window.store(v, Ordering::Relaxed);
+        assert!(!shared.show_window.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -233,7 +233,18 @@ pub fn run(shared: Arc<Shared>) -> Result<()> {
                 if !shared.running() {
                     return Err(e);
                 }
-                warn!(error = %e, "stream failed; retrying in 2 s");
+                // Milestone 6: a busy camera (held by another app) deserves a
+                // targeted hint, not just the generic retry message.
+                let chain = format!("{e:?}");
+                if chain.contains("EBUSY") || chain.contains("Device or resource busy") {
+                    warn!(
+                        error = %e,
+                        "device busy — the camera or loopback may be held by another app \
+                         (Discord/Zoom/browser?); close it or pass --input/--output; retrying in 2 s"
+                    );
+                } else {
+                    warn!(error = %e, "stream failed; retrying in 2 s");
+                }
                 for _ in 0..20 {
                     if !shared.running() {
                         return Ok(());
@@ -283,11 +294,17 @@ fn run_stream(shared: &Shared) -> Result<()> {
     // formats the loopback needs an explicit sizeimage to size its buffers.
     let sizeimage = w * h * 2;
     let out_fmt = out_dev.set_format(QueueType::VideoOutput, w, h, pf, sizeimage)?;
+    // Milestone 6: log requested vs negotiated explicitly — the camera may
+    // not support the requested WxH/fps and negotiate() silently picks the
+    // nearest. The GUI status line shows this via `Stats::negotiated`.
+    let negotiated = Some((in_fmt.width, in_fmt.height, den as f64 / num as f64));
     info!(
         input = %input_path.display(),
         output = %output_path.display(),
         format = %pf,
+        requested = format!("{}x{}@{}", dev_params.width, dev_params.height, dev_params.fps),
         width = in_fmt.width, height = in_fmt.height,
+        fps = den as f64 / num as f64,
         sizeimage = out_fmt.plane_fmt[0].sizeimage,
         interval = format!("{}/{}", num, den),
         "negotiated format"
@@ -303,7 +320,15 @@ fn run_stream(shared: &Shared) -> Result<()> {
         in_q.qbuf(i, 0, now_timeval())?;
     }
 
-    let result = capture_loop(shared, &in_dev, &in_q, &mut out_q, in_fmt.width, in_fmt.height);
+    let result = capture_loop(
+        shared,
+        &in_dev,
+        &in_q,
+        &mut out_q,
+        in_fmt.width,
+        in_fmt.height,
+        negotiated,
+    );
 
     let _ = in_q.stream_off();
     let _ = out_q.stream_off();
@@ -476,6 +501,7 @@ fn capture_loop(
     out_q: &mut Queue,
     w: u32,
     h: u32,
+    negotiated: Option<(u32, u32, f64)>,
 ) -> Result<()> {
     let dev_generation = shared.device_generation.load(Ordering::Relaxed);
 
@@ -571,6 +597,7 @@ fn capture_loop(
                 frames,
                 drops,
                 fps,
+                negotiated,
                 ..stage
             };
             *shared.stats.lock().unwrap() = st;
