@@ -77,6 +77,12 @@ pub struct Settings {
     /// Milestone 6: start with the window hidden (tray only). `--background`
     /// sets this for one run; the config can persist it.
     pub start_minimized: bool,
+    /// Milestone 7: publish the filtered feed as a native PipeWire camera
+    /// node (`media.role = Camera`), next to the v4l2loopback device. On by
+    /// default — it is the only path PipeWire-based apps (Snapshot, cosmic
+    /// camera, browsers via the portal) can consume on the pipewire builds
+    /// that crash on v4l2loopback streams.
+    pub pipewire: bool,
 }
 
 impl Default for Settings {
@@ -91,6 +97,7 @@ impl Default for Settings {
             gaze_strength: 0.5,
             close_to_tray: true,
             start_minimized: false,
+            pipewire: true,
         }
     }
 }

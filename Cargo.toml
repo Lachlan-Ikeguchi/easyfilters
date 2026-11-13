@@ -29,7 +29,12 @@ opencv = { version = "0.102", features = ["clang-runtime"] }
 # libwayland are provided by the nix flake (dlopen'd/linked by winit).
 # tray-item with the ksni feature: pure-Rust StatusNotifierItem over D-Bus,
 # no gtk3/libappindicator system libraries needed.
-# pipewire/tokio stay unused: capture is the v4l2r MMAP path in a std::thread.
+# pipewire gets used from milestone 7: the filtered feed is also published as
+# a native PipeWire Camera source node (libpipewire-0.3 via pkg-config) so
+# pw-based consumers (Snapshot, cosmic camera, browsers via the portal) can
+# read it directly. tokio stays unused: capture is the v4l2r MMAP path in a
+# std::thread.
+pipewire = { version = "0.8", features = ["v0_3_34"] }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 iced = { version = "0.14.0", default-features = false, features = [

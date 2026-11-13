@@ -11,6 +11,7 @@ mod gaze;
 mod gui;
 mod lock;
 mod pipeline;
+mod pwsource;
 mod segmentation;
 mod settings;
 mod tray;
@@ -99,6 +100,9 @@ struct Args {
     /// Disable gaze correction (overrides `gaze_correction` in the config)
     #[arg(long)]
     no_gaze: bool,
+    /// Milestone 7: disable the native PipeWire camera node (default: on)
+    #[arg(long)]
+    no_pipewire: bool,
     /// Gaze correction strength, 0..=1 (default: 0.5)
     #[arg(long, value_parser = parse_gaze_strength)]
     gaze_strength: Option<f32>,
@@ -170,6 +174,7 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             gaze_strength: args.gaze_strength.or(cfg.gaze_strength).unwrap_or(0.5),
             close_to_tray: cfg.close_to_tray.unwrap_or(true),
             start_minimized: start_minimized.unwrap_or(false),
+            pipewire: !args.no_pipewire && cfg.pipewire.unwrap_or(true),
         },
         device: DeviceParams {
             input: args.input.clone().or_else(|| cfg.input.clone()),

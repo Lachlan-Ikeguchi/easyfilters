@@ -25,6 +25,8 @@ pub struct Config {
     pub close_to_tray: Option<bool>,
     /// Milestone 6: start with the window hidden (tray only).
     pub start_minimized: Option<bool>,
+    /// Milestone 7: publish a native PipeWire camera node (default: on).
+    pub pipewire: Option<bool>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub width: Option<u32>,
@@ -91,6 +93,7 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         gaze_strength: Some(s.gaze_strength),
         close_to_tray: Some(s.close_to_tray),
         start_minimized: Some(s.start_minimized),
+        pipewire: Some(s.pipewire),
         input: d.input.clone(),
         output: d.output.clone(),
         width: Some(d.width),
@@ -153,6 +156,7 @@ mod tests {
             gaze_strength: Some(0.75),
             close_to_tray: Some(false),
             start_minimized: Some(true),
+            pipewire: Some(true),
             input: Some(PathBuf::from("/dev/video1")),
             output: Some(PathBuf::from("/dev/video0")),
             width: Some(1920),

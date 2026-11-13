@@ -51,6 +51,10 @@
               # tray-item's ksni backend links libdbus (via libdbus-sys) at
               # build time.
               dbus
+              # Milestone 7: native PipeWire camera source node (pwsource.rs)
+              # links libpipewire-0.3 via pkg-config; the wrapper below adds
+              # it to the runtime LD_LIBRARY_PATH.
+              pipewire
             ];
 
             LIBCLANG_PATH = "${libclangLib}/lib";
@@ -85,6 +89,9 @@
                     pkgs.wayland
                     pkgs.libxkbcommon
                     pkgs.dbus.lib
+                    # Milestone 7: the PipeWire source node links
+                    # libpipewire-0.3.so at runtime.
+                    pkgs.pipewire
                     # Milestone 6: winit's X11 backend dlopens these at
                     # runtime (Xwayland / X11-only sessions); the Wayland
                     # path does not need them.
@@ -152,6 +159,8 @@
             wayland
             libxkbcommon
             dbus
+            # Milestone 7: libpipewire-0.3 dev files for the pwsource module.
+            pipewire
             # X11 backend runtime libs (milestone 6: GUI on Xwayland/X11)
             xorg.libX11
             xorg.libXcursor

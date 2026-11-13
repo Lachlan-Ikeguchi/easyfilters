@@ -22,6 +22,7 @@ use crate::gaze::GazeCorrector;
 use crate::segmentation::{Segmenter, MODEL_H, MODEL_W};
 use crate::settings::{DeviceParams, Mode, Shared, Stats};
 use crate::v4l2::{Device, Queue};
+use crate::pwsource::PwSource;
 use crate::{composite, frame};
 
 pub(crate) const OUTPUT_LABEL: &str = "EasyFilters Virtual Camera";
@@ -320,11 +321,27 @@ fn run_stream(shared: &Shared) -> Result<()> {
         in_q.qbuf(i, 0, now_timeval())?;
     }
 
+    // Milestone 7: native PipeWire camera node publishing the same filtered
+    // feed (RGBA), so PipeWire-based apps can consume it without touching
+    // the v4l2loopback device. Failure must not kill the loopback path.
+    let pw_node = if shared.snapshot_settings().pipewire {
+        match PwSource::new(w, h, num, den) {
+            Ok(node) => Some(node),
+            Err(e) => {
+                warn!(error = %e, "pipewire source unavailable; continuing without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let result = capture_loop(
         shared,
         &in_dev,
         &in_q,
         &mut out_q,
+        pw_node.as_ref(),
         in_fmt.width,
         in_fmt.height,
         negotiated,
@@ -354,14 +371,14 @@ fn filter_frame(
     src: &[u8],
     w: u32,
     h: u32,
+    produce_rgba: bool,
 ) -> Result<Option<(Vec<u8>, Stats, Option<(u32, u32, Vec<u8>)>)>> {
     let s = shared.snapshot_settings();
-    let preview_on = shared.preview_on.load(Ordering::Relaxed);
 
     // Passthrough (filter disabled or mode=passthrough): byte-copy. Decode
     // only for the preview when a GUI is attached.
     if !s.enabled || s.mode == Mode::Passthrough {
-        let preview = if preview_on {
+        let preview = if produce_rgba {
             frame::decode_mjpg(src).ok().and_then(|img| mat_to_rgba(&img).ok())
         } else {
             None
@@ -473,7 +490,7 @@ fn filter_frame(
         0.0
     };
 
-    let preview = if preview_on {
+    let preview = if produce_rgba {
         Some(mat_to_rgba(&out_img)?)
     } else {
         None
@@ -499,6 +516,7 @@ fn capture_loop(
     in_dev: &Device,
     in_q: &Queue,
     out_q: &mut Queue,
+    pw: Option<&PwSource>,
     w: u32,
     h: u32,
     negotiated: Option<(u32, u32, f64)>,
@@ -547,6 +565,9 @@ fn capture_loop(
         }
 
         if let Some(d) = in_q.try_dqbuf()? {
+            // RGBA copy for the GUI preview and/or the PipeWire node.
+            let produce_rgba =
+                shared.preview_on.load(Ordering::Relaxed) || pw.is_some();
             match out_inflight.iter().position(|&f| !f) {
                 Some(oidx) => {
                     let src = &in_q.buffers[d.index as usize].mapping.as_ref()
@@ -562,11 +583,19 @@ fn capture_loop(
                         src,
                         w,
                         h,
+                        produce_rgba,
                     )? {
                         Some((bytes, timing, preview)) => {
-                            if let Some((pw, ph, rgba)) = preview {
+                            // Milestone 7: hand the RGBA frame to the
+                            // PipeWire node before the preview consumes it.
+                            if let Some(node) = pw {
+                                if let Some((pv_w, pv_h, rgba)) = preview.as_ref() {
+                                    node.push(*pv_w, *pv_h, rgba);
+                                }
+                            }
+                            if let Some((pv_w, pv_h, rgba)) = preview {
                                 seq += 1;
-                                shared.publish_preview(pw, ph, rgba, seq);
+                                shared.publish_preview(pv_w, pv_h, rgba, seq);
                             }
                             let dst = out_q.buffers[oidx].mapping.as_mut();
                             let n = bytes.len().min(dst.len());
