@@ -46,6 +46,9 @@
               # libwayland and libxkbcommon at build/runtime.
               wayland
               libxkbcommon
+              # tray-item's ksni backend links libdbus (via libdbus-sys) at
+              # build time.
+              dbus
             ];
 
             LIBCLANG_PATH = "${libclangLib}/lib";
@@ -68,6 +71,7 @@
                     pkgs.stdenv.cc.cc.lib
                     pkgs.wayland
                     pkgs.libxkbcommon
+                    pkgs.dbus.lib
                   ]
                 }"
             '';
@@ -115,9 +119,11 @@
             v4l-utils
             ffmpeg
             (python3.withPackages (ps: [ ps.opencv4 ]))
-            # winit (iced GUI) dlopens these at runtime
+            # winit (iced GUI) dlopens these at runtime; dbus dev files let
+            # libdbus-sys (tray-item/ksni) build via pkg-config
             wayland
             libxkbcommon
+            dbus
           ];
           # Same env the package build uses, so plain `cargo build` inside
           # `nix develop` works without manual OPENCV_*/LIBCLANG_PATH exports.

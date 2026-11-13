@@ -35,7 +35,9 @@ toml = "1.1.2"
 iced = { version = "0.14.0", default-features = false, features = [
     "tiny-skia",
     "image",
-    "thread-pool",
+    # smol (not thread-pool): the thread-pool backend has no time::every,
+    # which the preview subscription needs. smol is pure Rust.
+    "smol",
     "wayland",
     "x11",
     "web-colors",
