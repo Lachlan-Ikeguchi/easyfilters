@@ -26,7 +26,8 @@ same way. The two apps are designed to sit side by side in the system tray.
 
 ## Out of scope (for now)
 
-- Eye-contact / gaze correction (deliberately deferred — see "Risks").
+- Full gaze redirection beyond the capped landmark-based pupil shift of
+  milestone 5 (RTX/Maxine-class — see "Risks").
 - Beauty filters, avatars, overlays, segmentation of anything but the person.
 - Audio processing (that's EasyEffects' job — the two apps complement each
   other), multi-camera support, streaming-key style scenes.
@@ -113,10 +114,11 @@ images.
   install instructions instead of failing cryptically.
 - **App enumeration quirks**: some apps enumerate cameras only at startup, so
   enabling EasyFilters may require restarting the app once. Document this.
-- **Eye contact correction is deliberately excluded.** Production-quality gaze
-  redirection (NVIDIA Maxine) needs an RTX GPU and is proprietary; CPU-feasible
-  alternatives are research-grade. A subtle landmark-based pupil shift is
-  possible later as an optional, capped effect — not part of the MVP.
+- **Eye contact correction is capped, not full gaze redirection.** Production-
+  quality gaze redirection (NVIDIA Maxine) needs an RTX GPU and is proprietary;
+  CPU-feasible alternatives are research-grade. Milestone 5 implements only a
+  subtle landmark-based pupil shift as an optional, capped, opt-in effect —
+  see `plan/milestone5.md`.
 - **Model licensing**: MediaPipe models are Apache 2.0 — fine to bundle or
   download at first run.
 - **Pure-PipeWire alternative**: instead of v4l2loopback, a custom PipeWire
@@ -132,5 +134,7 @@ images.
    preview.
 3. **Compositing**: blur + background replace with temporal smoothing.
 4. **GUI + tray + config**: full controls, persistent settings, tray toggle.
-5. **Polish**: resolution/fps controls, camera selection, startup behavior
-   (launch at login), packaging.
+5. **Gaze correction**: subtle, capped, landmark-based pupil shift (optional,
+   opt-in) so the user appears to look at the camera — see `plan/milestone5.md`.
+6. **Polish**: startup behavior (launch at login), packaging, any leftover
+   resolution/fps/camera-selection rough edges.
