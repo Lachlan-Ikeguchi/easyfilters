@@ -179,7 +179,7 @@ pub struct Shared {
     pub preview_on: AtomicBool,
     pub stats: Mutex<Stats>,
     /// Milestone 6: tray -> GUI "show/hide the window" requests. The GUI
-    /// watches edges of this on its tick and applies `window::set_mode`.
+    /// watches edges of this on its tick and closes/reopens the window.
     /// Initialized from `!settings.start_minimized`.
     pub show_window: AtomicBool,
 }

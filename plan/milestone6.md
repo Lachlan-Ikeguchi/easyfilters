@@ -293,3 +293,17 @@ Two real bugs found when testing on a native KDE Wayland session:
   sandbox (no input injection / KWin window activation), but the winit
   behavior is confirmed in the vendored source (`set_visible` no-op,
   `set_minimized(true)` implemented). `cargo test --release`: 81 passed.
+
+## Follow-up: true hide instead of minimize on Wayland
+
+The minimize workaround above was superseded: winit 0.30 can't unmap a
+Wayland window, but iced 0.14's `daemon()` mode never exits when the last
+window closes (`iced_winit` skips the empty-manager exit when
+`is_daemon`), so `gui.rs` now runs as a daemon and "hide" is
+`window::close(id)` — the window is destroyed, i.e. truly gone from the
+screen/taskbar on Wayland *and* X11 — while "show" is `window::open(...)`.
+Single code path, no `WAYLAND_DISPLAY` sniffing; `--start-minimized` now
+simply doesn't open the initial window (also removes the brief flash on
+Wayland, where `visible: false` at creation was a no-op). While hidden,
+the GUI drops preview frames instead of copying them into a texture and
+clears `preview_on` so the pipeline stops building RGBA previews.

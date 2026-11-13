@@ -97,7 +97,9 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
         }
 
         // Milestone 6: show/hide the GUI window. The GUI watches edges of
-        // `show_window` on its tick and applies `window::set_mode`.
+        // `show_window` on its tick and closes/reopens the window
+        // (`window::close`/`window::open` — a real hide, since winit cannot
+        // unmap a Wayland window).
         let win_shared = shared.clone();
         if let Err(e) = tray.add_menu_item("Show/Hide window", move || {
             let visible = !win_shared.show_window.load(Ordering::Relaxed);

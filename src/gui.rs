@@ -16,43 +16,52 @@ use iced::widget::{
     button, column, container, image, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
 use iced::window;
-use iced::{application, time, Alignment, ContentFit, Element, Length, Size, Subscription, Task, Theme};
+use iced::{daemon, time, Alignment, ContentFit, Element, Length, Size, Subscription, Task, Theme};
 
 use crate::settings::{Mode, Shared, Stats};
 use crate::config;
 
 pub fn run(shared: Arc<Shared>, config_path: PathBuf) -> iced::Result {
-    // Milestone 6: `--start-minimized` starts with the window hidden (tray
-    // only). Close requests are handled via the `close_requests` subscription
-    // so they can hide-to-tray instead of exiting (`exit_on_close_request =
+    // Milestone 6: run as an iced *daemon*. A daemon does not exit when its
+    // last window closes, which is what makes a true "hide to tray"
+    // possible: hide = `window::close` (the window is destroyed, not
+    // minimized), show = `window::open`. winit 0.30 cannot unmap a window
+    // on native Wayland (`set_visible` is a no-op and un-minimize is
+    // ignored there), so close/reopen is the only real hide on Wayland —
+    // and it works on X11 too, so there is a single code path.
+    // `--start-minimized` just skips the initial `window::open` (tray only).
+    // Close requests are handled via the `close_requests` subscription so
+    // they can hide-to-tray instead of exiting (`exit_on_close_request =
     // false` disables the runtime's default exit).
     let start_minimized = shared.snapshot_settings().start_minimized;
-    application(
-        move || (App::new(shared.clone(), config_path.clone()), Task::none()),
+    daemon(
+        move || {
+            let app = App::new(shared.clone(), config_path.clone());
+            let task = if start_minimized {
+                Task::none()
+            } else {
+                window::open(window_settings()).1.map(Message::WindowId)
+            };
+            (app, task)
+        },
         App::update,
         App::view,
     )
     .title("EasyFilters")
-    .window(window::Settings {
-        size: Size::new(1024.0, 600.0),
-        visible: !start_minimized,
-        exit_on_close_request: false,
-        ..Default::default()
-    })
     .theme(Theme::Dark)
     .subscription(App::subscription)
     .run()
 }
 
-/// Whether winit will use its native Wayland backend (it prefers Wayland
-/// whenever WAYLAND_DISPLAY is set). On native Wayland, winit's
-/// `set_visible` is a no-op, so "hide the window" has to minimize instead —
-/// and since Wayland can't un-minimize via winit, "show" recreates the
-/// window (milestone 6 fix for close-to-tray on Wayland sessions).
-fn native_wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false)
+/// Settings for every window this app opens (the initial one and any the
+/// tray "Show/Hide window" item re-opens).
+fn window_settings() -> window::Settings {
+    window::Settings {
+        size: Size::new(1024.0, 600.0),
+        visible: true,
+        exit_on_close_request: false,
+        ..Default::default()
+    }
 }
 
 struct App {
@@ -71,7 +80,6 @@ struct App {
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
     window_visible: bool,
-    native_wayland: bool,
     background_text: String,
     // Device controls (applied via "Apply" -> stream restart).
     input_text: String,
@@ -97,9 +105,12 @@ enum Message {
     /// The window was asked to close (WM close button). Milestone 6:
     /// hide to tray when `close_to_tray`, else quit.
     CloseRequested(window::Id),
-    /// A window event carried an id we can use for `set_mode` (captured from
-    /// the initial resize event).
+    /// A window was opened (or resized) — carries its id so the
+    /// tray-driven show/hide on Tick can address it.
     WindowId(window::Id),
+    /// A window was closed (by our own hide, or by the runtime) — keeps the
+    /// tray's show/hide state in sync.
+    WindowClosed(window::Id),
     BackgroundChanged(String),
     BackgroundSubmit,
     InputChanged(String),
@@ -124,7 +135,6 @@ impl App {
             close_to_tray: s.close_to_tray,
             window_id: None,
             window_visible: !s.start_minimized,
-            native_wayland: native_wayland(),
             background_text: s
                 .background
                 .as_ref()
@@ -161,31 +171,21 @@ impl App {
         }
     }
 
-    /// Hide the window. On X11 `Mode::Hidden` really hides it; on native
-    /// Wayland `set_visible` is a no-op in winit, so minimize instead.
+    /// Hide the window to the tray: destroy it. A real hide means the window
+    /// is gone from the screen and taskbar, not minimized — winit 0.30
+    /// cannot unmap a Wayland window (`set_visible` is a no-op there and
+    /// un-minimize is ignored), so on every platform we `window::close`;
+    /// daemon mode keeps the process (and the pipeline) alive with zero
+    /// windows, and `show_task` opens a fresh one.
     fn hide_task(&self, id: window::Id) -> Task<Message> {
-        if self.native_wayland {
-            window::minimize(id, true)
-        } else {
-            window::set_mode(id, window::Mode::Hidden)
-        }
+        window::close(id)
     }
 
-    /// Show the window. On X11 flip the mode back to Windowed; on Wayland
-    /// minimizing is one-way (winit ignores un-minimize), so close the
-    /// minimized window and open a fresh visible one.
-    fn show_task(&mut self, id: window::Id) -> Task<Message> {
-        if self.native_wayland {
-            let (_new_id, open_task) = window::open(window::Settings {
-                size: Size::new(1024.0, 600.0),
-                visible: true,
-                exit_on_close_request: false,
-                ..Default::default()
-            });
-            Task::batch([open_task.map(Message::WindowId), window::close(id)])
-        } else {
-            window::set_mode(id, window::Mode::Windowed)
-        }
+    /// Show the window again: open a fresh one. The previous window was
+    /// destroyed by `hide_task` (window ids are never reused), so there is
+    /// nothing to close here.
+    fn show_task(&self) -> Task<Message> {
+        window::open(window_settings()).1.map(Message::WindowId)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -195,16 +195,22 @@ impl App {
                     return iced::exit();
                 }
                 // New preview frame? (take() so the slot does not grow stale.)
+                // While hidden there is no window to draw into, so drop the
+                // frame instead of copying it into a texture — and tell the
+                // pipeline to stop building previews at all.
                 {
                     let mut slot = self.shared.preview.lock().unwrap();
                     if let Some(p) = slot.take() {
-                        if p.seq != self.preview_seq {
+                        if self.window_visible && p.seq != self.preview_seq {
                             tracing::debug!(seq = p.seq, w = p.width, h = p.height, "new preview frame");
                             self.preview = Some(Handle::from_rgba(p.width, p.height, p.rgba));
                             self.preview_seq = p.seq;
                         }
                     }
                 }
+                self.shared
+                    .preview_on
+                    .store(self.window_visible, Ordering::Relaxed);
                 // Re-sync controls in case the tray toggled something.
                 let s = self.shared.snapshot_settings();
                 if s.enabled != self.enabled {
@@ -234,13 +240,16 @@ impl App {
                 let want_visible = self.shared.show_window.load(Ordering::Relaxed);
                 if want_visible != self.window_visible {
                     self.window_visible = want_visible;
-                    if let Some(id) = self.window_id {
-                        return if want_visible {
-                            self.show_task(id)
-                        } else {
-                            self.hide_task(id)
-                        };
-                    }
+                    // Show opens a fresh window (no id needed); hide closes
+                    // the current one — after a hide there is no window, so
+                    // there is nothing to close.
+                    return if want_visible {
+                        self.show_task()
+                    } else if let Some(id) = self.window_id {
+                        self.hide_task(id)
+                    } else {
+                        Task::none()
+                    };
                 }
                 Task::none()
             }
@@ -257,13 +266,17 @@ impl App {
                 }
             }
             Message::WindowId(id) => {
-                let was_unknown = self.window_id.is_none();
                 self.window_id = Some(id);
-                // On native Wayland `visible: false` at creation is a no-op
-                // (winit set_visible), so apply the start-minimized hide once
-                // we know the window id.
-                if was_unknown && !self.window_visible {
-                    return self.hide_task(id);
+                Task::none()
+            }
+            Message::WindowClosed(id) => {
+                // The current window is gone (we closed it via hide, or the
+                // runtime did) — keep the tray's show/hide toggle in sync.
+                // A stale event for an already-replaced window is ignored.
+                if self.window_id == Some(id) {
+                    self.window_id = None;
+                    self.window_visible = false;
+                    self.shared.show_window.store(false, Ordering::Relaxed);
                 }
                 Task::none()
             }
@@ -384,15 +397,16 @@ impl App {
             time::every(Duration::from_millis(33)).map(|_| Message::Tick),
             // Milestone 6: close requests (handled above, not auto-exit).
             window::close_requests().map(Message::CloseRequested),
-            // Capture the window id (open + resize events) so the
-            // tray-driven show/hide on Tick can address it — open_events
-            // fires for the initial window even when created hidden.
+            // Window bookkeeping: capture the id of each opened window (open
+            // + resize events) and notice when one is closed, so the
+            // tray-driven show/hide on Tick can address it.
             window::open_events().map(Message::WindowId),
             window::resize_events().map(|(id, _)| Message::WindowId(id)),
+            window::close_events().map(Message::WindowClosed),
         ])
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view(&self, _window: window::Id) -> Element<'_, Message> {
         let preview: Element<'_, Message> = match &self.preview {
             Some(handle) => container(
                 image(handle.clone())

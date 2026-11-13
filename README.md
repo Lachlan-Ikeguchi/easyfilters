@@ -190,9 +190,11 @@ Use the **nix-wrapped** binary (`./result/bin/easyfilters`) for autostart:
 the raw `target/release/easyfilters` only works inside `nix develop`
 (runtime libs on `LD_LIBRARY_PATH`); outside it the GUI can fail to start
 — in that case the app now logs the error and keeps filtering headless
-instead of dying. Note: on native Wayland, closing the window *minimizes*
-it to the tray (Wayland windows can't be hidden, only minimized; tray
-"Show window" reopens it), while on X11/Xwayland it is truly hidden.
+instead of dying. Note: hiding the window is a real hide on every platform
+— the GUI runs as an iced *daemon*, so "hide" destroys the window
+(`window::close`; winit can't unmap a Wayland window, only minimize) and
+tray "Show window" re-opens a fresh one; the process and the filtering
+keep running in the background either way.
 
 On NixOS, `easyfilters.autostart = true;` in the flake's module starts the
 package as a systemd user service (`--start-minimized`) at graphical login
