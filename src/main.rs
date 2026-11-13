@@ -1,10 +1,12 @@
-//! easyfilters — milestone 4: GUI + tray + config around the milestone 1-3
+//! easyfilters — milestone 5: gaze correction (capped, opt-in pupil shift)
+//! on top of the milestone 4 GUI + tray + config around the milestone 1-3
 //! capture/segment/composite pipeline. Without a display (or with --no-gui)
 //! it runs the pipeline headless with the previous CLI behavior.
 
 mod composite;
 mod config;
 mod frame;
+mod gaze;
 mod gui;
 mod pipeline;
 mod segmentation;
@@ -89,7 +91,19 @@ struct Args {
     /// EMA alpha for mask temporal smoothing, 0..1 (higher = smoother, more lag)
     #[arg(long)]
     mask_smoothing: Option<f32>,
-    /// Decode one image, run segmentation, write mask.png/overlay.png/blur.png/replace.png next to it, exit
+    /// Enable gaze correction (capped pupil shift; default: off)
+    #[arg(long)]
+    gaze: bool,
+    /// Disable gaze correction (overrides `gaze_correction` in the config)
+    #[arg(long)]
+    no_gaze: bool,
+    /// Gaze correction strength, 0..=1 (default: 0.5)
+    #[arg(long, value_parser = parse_gaze_strength)]
+    gaze_strength: Option<f32>,
+    /// Face-mesh ONNX model for gaze correction (default: bundled assets/ model, or $EASYFILTERS_FACE_MODEL)
+    #[arg(long)]
+    face_model: Option<PathBuf>,
+    /// Decode one image, run segmentation + gaze, write mask.png/overlay.png/blur.png/replace.png/gaze.png next to it, exit
     #[arg(long)]
     self_test: Option<PathBuf>,
     /// Disable filtering (passthrough); overrides `enabled` in the config
@@ -108,9 +122,26 @@ struct Resolved {
     device: DeviceParams,
 }
 
+/// Parse --gaze-strength: an f32 in 0..=1.
+fn parse_gaze_strength(s: &str) -> Result<f32, String> {
+    let v: f32 = s.parse().map_err(|_| format!("invalid gaze strength {s:?}"))?;
+    if (0.0..=1.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("gaze strength must be in 0..=1, got {v}"))
+    }
+}
+
 /// Effective configuration: CLI arg > config file > built-in default.
 fn resolve(args: &Args, cfg: &Config) -> Resolved {
     let enabled = if args.disable { Some(false) } else { cfg.enabled };
+    let gaze = if args.gaze {
+        Some(true)
+    } else if args.no_gaze {
+        Some(false)
+    } else {
+        cfg.gaze_correction
+    };
     Resolved {
         settings: Settings {
             enabled: enabled.unwrap_or(true),
@@ -118,6 +149,8 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             blur_strength: args.blur_strength.or(cfg.blur_strength).unwrap_or(15.0),
             mask_smoothing: args.mask_smoothing.or(cfg.mask_smoothing).unwrap_or(0.6),
             background: args.background.clone().or_else(|| cfg.background.clone()),
+            gaze_correction: gaze.unwrap_or(false),
+            gaze_strength: args.gaze_strength.or(cfg.gaze_strength).unwrap_or(0.5),
         },
         device: DeviceParams {
             input: args.input.clone().or_else(|| cfg.input.clone()),
@@ -128,6 +161,7 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             format: args.format.clone().or_else(|| cfg.format.clone()),
             buffers: args.buffers.or(cfg.buffers).unwrap_or(4),
             model: args.model.clone().or_else(|| cfg.model.clone()),
+            face_model: args.face_model.clone().or_else(|| cfg.face_model.clone()),
         },
     }
 }
@@ -188,6 +222,28 @@ fn self_test(path: &Path, resolved: &Resolved) -> Result<()> {
     frame::write_image(&blur_path, &blurred)?;
     frame::write_image(&replace_path, &replaced)?;
     println!("wrote {} and {}", blur_path.display(), replace_path.display());
+
+    // Gaze stage (milestone 5): run the face detector + mesh on the image and
+    // apply the capped pupil shift, using the feathered person mask so only
+    // the person is corrected. Writes gaze.png and prints the per-eye shift.
+    let t = Instant::now();
+    let det_path = pipeline::resolve_face_detector();
+    let mesh_path = pipeline::resolve_face_model(&resolved.device.face_model);
+    let mut corrector = gaze::GazeCorrector::load(&det_path, &mesh_path)
+        .with_context(|| format!("load face models ({}, {})", det_path.display(), mesh_path.display()))?;
+    let mut gaze_img = img.try_clone()?;
+    corrector.process(&img, &mut gaze_img, &mask_full_f, resolved.settings.gaze_strength)?;
+    let gaze_ms = t.elapsed().as_secs_f64() * 1000.0;
+    match corrector.last_shifts {
+        [Some(l), Some(r)] => println!(
+            "gaze shift: left ({:.2}, {:.2}) px, right ({:.2}, {:.2}) px  ({:.1} ms)",
+            l.0, l.1, r.0, r.1, gaze_ms
+        ),
+        _ => println!("gaze: no face/eyes detected ({:.1} ms)", gaze_ms),
+    }
+    let gaze_path = dir.join("gaze.png");
+    frame::write_image(&gaze_path, &gaze_img)?;
+    println!("wrote {}", gaze_path.display());
     Ok(())
 }
 
@@ -296,6 +352,50 @@ mod tests {
         assert_eq!(
             resolve(&args, &cfg).settings.background,
             Some(PathBuf::from("/tmp/bg.png"))
+        );
+    }
+
+    #[test]
+    fn resolve_gaze_flags_and_defaults() {
+        // default: opt-in off, strength 0.5
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        let r = resolve(&args, &Config::default());
+        assert!(!r.settings.gaze_correction);
+        assert_eq!(r.settings.gaze_strength, 0.5);
+        // config wins over default
+        let cfg = Config {
+            gaze_correction: Some(true),
+            gaze_strength: Some(0.8),
+            ..Default::default()
+        };
+        let r = resolve(&args, &cfg);
+        assert!(r.settings.gaze_correction);
+        assert_eq!(r.settings.gaze_strength, 0.8);
+        // --gaze / --no-gaze beat the config
+        let args = Args::try_parse_from(["easyfilters", "--gaze"]).unwrap();
+        assert!(resolve(&args, &Config::default()).settings.gaze_correction);
+        let args = Args::try_parse_from(["easyfilters", "--no-gaze"]).unwrap();
+        assert!(!resolve(&args, &cfg).settings.gaze_correction);
+        // --gaze-strength beats config
+        let args = Args::try_parse_from(["easyfilters", "--gaze-strength", "0.25"]).unwrap();
+        assert_eq!(resolve(&args, &cfg).settings.gaze_strength, 0.25);
+        // out-of-range strength is rejected by the parser
+        assert!(Args::try_parse_from(["easyfilters", "--gaze-strength", "1.5"]).is_err());
+        assert!(Args::try_parse_from(["easyfilters", "--gaze-strength", "abc"]).is_err());
+        // face_model resolution: CLI > config
+        let args = Args::try_parse_from(["easyfilters", "--face-model", "/tmp/f.onnx"]).unwrap();
+        assert_eq!(
+            resolve(&args, &Config::default()).device.face_model,
+            Some(PathBuf::from("/tmp/f.onnx"))
+        );
+        let cfg = Config {
+            face_model: Some(PathBuf::from("/tmp/cfg.onnx")),
+            ..Default::default()
+        };
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        assert_eq!(
+            resolve(&args, &cfg).device.face_model,
+            Some(PathBuf::from("/tmp/cfg.onnx"))
         );
     }
 }

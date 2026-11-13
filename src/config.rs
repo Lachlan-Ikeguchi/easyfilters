@@ -19,6 +19,8 @@ pub struct Config {
     pub blur_strength: Option<f64>,
     pub mask_smoothing: Option<f32>,
     pub background: Option<PathBuf>,
+    pub gaze_correction: Option<bool>,
+    pub gaze_strength: Option<f32>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub width: Option<u32>,
@@ -27,6 +29,7 @@ pub struct Config {
     pub format: Option<String>,
     pub buffers: Option<u32>,
     pub model: Option<PathBuf>,
+    pub face_model: Option<PathBuf>,
 }
 
 /// Default config location: `$XDG_CONFIG_HOME/easyfilters/config.toml`,
@@ -80,6 +83,8 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         blur_strength: Some(s.blur_strength),
         mask_smoothing: Some(s.mask_smoothing),
         background: s.background.clone(),
+        gaze_correction: Some(s.gaze_correction),
+        gaze_strength: Some(s.gaze_strength),
         input: d.input.clone(),
         output: d.output.clone(),
         width: Some(d.width),
@@ -88,6 +93,7 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         format: d.format.clone(),
         buffers: Some(d.buffers),
         model: d.model.clone(),
+        face_model: d.face_model.clone(),
     };
     save(path, &cfg)
 }
@@ -137,6 +143,8 @@ mod tests {
             blur_strength: Some(22.5),
             mask_smoothing: Some(0.3),
             background: Some(PathBuf::from("/tmp/bg.jpg")),
+            gaze_correction: Some(true),
+            gaze_strength: Some(0.75),
             input: Some(PathBuf::from("/dev/video1")),
             output: Some(PathBuf::from("/dev/video0")),
             width: Some(1920),
@@ -145,6 +153,7 @@ mod tests {
             format: Some("MJPG".to_string()),
             buffers: Some(6),
             model: Some(PathBuf::from("/tmp/model.onnx")),
+            face_model: Some(PathBuf::from("/tmp/face.onnx")),
         };
         save(&p, &cfg).unwrap();
         assert_eq!(load(&p).unwrap(), cfg);

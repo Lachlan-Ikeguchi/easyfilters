@@ -66,6 +66,11 @@ pub struct Settings {
     pub mask_smoothing: f32,
     /// Background image for replace mode (None = solid #003200).
     pub background: Option<PathBuf>,
+    /// Milestone 5: gaze correction (capped pupil shift). Opt-in, default
+    /// off — the one effect that can look uncanny.
+    pub gaze_correction: bool,
+    /// Gaze shift scale, 0..=1 (the absolute pixel cap applies on top).
+    pub gaze_strength: f32,
 }
 
 impl Default for Settings {
@@ -76,6 +81,8 @@ impl Default for Settings {
             blur_strength: 15.0,
             mask_smoothing: 0.6,
             background: None,
+            gaze_correction: false,
+            gaze_strength: 0.5,
         }
     }
 }
@@ -97,6 +104,10 @@ pub struct DeviceParams {
     pub buffers: u32,
     /// ONNX model override (None = $EASYFILTERS_MODEL or the bundled model).
     pub model: Option<PathBuf>,
+    /// Face-mesh ONNX model override for gaze correction (None =
+    /// $EASYFILTERS_FACE_MODEL or the bundled model). The face detector
+    /// stays bundled ($EASYFILTERS_FACE_DETECTOR overrides it for packaging).
+    pub face_model: Option<PathBuf>,
 }
 
 impl Default for DeviceParams {
@@ -110,6 +121,7 @@ impl Default for DeviceParams {
             format: None,
             buffers: 4,
             model: None,
+            face_model: None,
         }
     }
 }
@@ -134,6 +146,8 @@ pub struct Stats {
     pub infer_ms: f64,
     pub composite_ms: f64,
     pub encode_ms: f64,
+    /// Milestone 5 gaze stage.
+    pub gaze_ms: f64,
 }
 
 /// The single source of truth shared by all threads. `running` is backed by
