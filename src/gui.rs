@@ -290,7 +290,9 @@ impl App {
             .spacing(4),
             column![
                 text(format!("Mask smoothing: {:.2}", self.mask_smoothing)),
-                slider(0.0..=1.0, self.mask_smoothing, Message::SmoothingChanged),
+                // iced sliders default to step = 1, which on a 0..=1 range
+                // snaps the value to exactly 0 or 1 — set a real step.
+                slider(0.0..=1.0, self.mask_smoothing, Message::SmoothingChanged).step(0.01f32),
             ]
             .spacing(4),
             column![

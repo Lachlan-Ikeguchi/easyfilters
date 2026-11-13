@@ -236,6 +236,11 @@ pipeline thread driven by shared settings.
   --help` runs). The flake's new `dbus`/`wayland`/`libxkbcommon` buildInputs
   cover libdbus-sys and winit. Only warning is the pre-existing
   function-item-cast in the signal handler.
+- **Bug found by manual GUI use:** the mask-smoothing slider snapped to 0/1 —
+  iced sliders default to `step = T::from(1)`, and with that step a
+  `0.0..=1.0` f32 range only has two reachable values. Fixed with
+  `.step(0.01)` on the smoothing slider (blur slider keeps integer steps,
+  which is intended for a sigma).
 - **Not verified here:** clicking the actual GUI controls (no input injection
   in this session; screenshots/D-Bus menu activation are blocked by the
   sandbox approval policy). The control handlers are thin wrappers over
