@@ -50,6 +50,19 @@ pub(crate) fn toggle_filtering(shared: &Shared, config_path: &Path) {
     info!(enabled, "toggled filtering");
 }
 
+/// Flip the gaze-correction flag and persist the config (milestone 5).
+pub(crate) fn toggle_gaze(shared: &Shared, config_path: &Path) {
+    let on = {
+        let mut s = shared.settings.write().unwrap();
+        s.gaze_correction = !s.gaze_correction;
+        s.gaze_correction
+    };
+    if let Err(e) = crate::config::save_current(config_path, shared) {
+        warn!(error = %e, "could not save config after gaze toggle");
+    }
+    info!(gaze_correction = on, "toggled gaze correction");
+}
+
 /// Spawn the tray thread. The returned handle finishes when `shared` stops.
 pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -70,6 +83,14 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             toggle_filtering(&toggle_shared, &toggle_config);
         }) {
             warn!(error = %e, "tray: could not add toggle item");
+        }
+
+        let gaze_shared = shared.clone();
+        let gaze_config = config_path.clone();
+        if let Err(e) = tray.add_menu_item("Toggle gaze correction", move || {
+            toggle_gaze(&gaze_shared, &gaze_config);
+        }) {
+            warn!(error = %e, "tray: could not add gaze toggle item");
         }
 
         let quit_shared = shared.clone();
@@ -111,6 +132,27 @@ mod tests {
         toggle_filtering(&shared, &path);
         assert!(shared.snapshot_settings().enabled);
         assert_eq!(crate::config::load(&path).unwrap().enabled, Some(true));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn toggle_gaze_flips_and_persists() {
+        let dir = std::env::temp_dir().join(format!("easyfilters-test-gaze-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let shared = Shared::new(Settings::default(), DeviceParams::default());
+        assert!(!shared.snapshot_settings().gaze_correction); // opt-in default
+
+        toggle_gaze(&shared, &path);
+        assert!(shared.snapshot_settings().gaze_correction);
+        let cfg = crate::config::load(&path).unwrap();
+        assert_eq!(cfg.gaze_correction, Some(true));
+        assert_eq!(cfg.gaze_strength, Some(0.5)); // persisted alongside
+
+        toggle_gaze(&shared, &path);
+        assert!(!shared.snapshot_settings().gaze_correction);
+        assert_eq!(crate::config::load(&path).unwrap().gaze_correction, Some(false));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

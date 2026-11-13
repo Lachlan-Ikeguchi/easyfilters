@@ -42,6 +42,8 @@ struct App {
     mode: Mode,
     blur_strength: f64,
     mask_smoothing: f32,
+    gaze_correction: bool,
+    gaze_strength: f32,
     background_text: String,
     // Device controls (applied via "Apply" -> stream restart).
     input_text: String,
@@ -61,6 +63,8 @@ enum Message {
     ModePicked(Mode),
     BlurChanged(f64),
     SmoothingChanged(f32),
+    GazeToggled(bool),
+    GazeStrengthChanged(f32),
     BackgroundChanged(String),
     BackgroundSubmit,
     InputChanged(String),
@@ -80,6 +84,8 @@ impl App {
             mode: s.mode,
             blur_strength: s.blur_strength,
             mask_smoothing: s.mask_smoothing,
+            gaze_correction: s.gaze_correction,
+            gaze_strength: s.gaze_strength,
             background_text: s
                 .background
                 .as_ref()
@@ -107,6 +113,8 @@ impl App {
             s.mode = self.mode;
             s.blur_strength = self.blur_strength;
             s.mask_smoothing = self.mask_smoothing;
+            s.gaze_correction = self.gaze_correction;
+            s.gaze_strength = self.gaze_strength;
         }
         if let Err(e) = config::save_current(&self.config_path, &self.shared) {
             self.status = format!("config save failed: {e}");
@@ -144,6 +152,12 @@ impl App {
                 if (s.mask_smoothing - self.mask_smoothing).abs() > 1e-6 {
                     self.mask_smoothing = s.mask_smoothing;
                 }
+                if s.gaze_correction != self.gaze_correction {
+                    self.gaze_correction = s.gaze_correction;
+                }
+                if (s.gaze_strength - self.gaze_strength).abs() > 1e-6 {
+                    self.gaze_strength = s.gaze_strength;
+                }
                 self.stats = *self.shared.stats.lock().unwrap();
                 Task::none()
             }
@@ -164,6 +178,16 @@ impl App {
             }
             Message::SmoothingChanged(v) => {
                 self.mask_smoothing = v;
+                self.apply_and_save();
+                Task::none()
+            }
+            Message::GazeToggled(v) => {
+                self.gaze_correction = v;
+                self.apply_and_save();
+                Task::none()
+            }
+            Message::GazeStrengthChanged(v) => {
+                self.gaze_strength = v;
                 self.apply_and_save();
                 Task::none()
             }
@@ -267,8 +291,8 @@ impl App {
 
         let st = self.stats;
         let status = text(format!(
-            "{}  |  {:.1} fps, {} frames, {} drops  |  decode {:.1} / infer {:.1} / composite {:.1} / encode {:.1} ms",
-            self.status, st.fps, st.frames, st.drops, st.decode_ms, st.infer_ms, st.composite_ms, st.encode_ms
+            "{}  |  {:.1} fps, {} frames, {} drops  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
+            self.status, st.fps, st.frames, st.drops, st.decode_ms, st.infer_ms, st.composite_ms, st.gaze_ms, st.encode_ms
         ))
         .size(12);
 
@@ -293,6 +317,14 @@ impl App {
                 // iced sliders default to step = 1, which on a 0..=1 range
                 // snaps the value to exactly 0 or 1 — set a real step.
                 slider(0.0..=1.0, self.mask_smoothing, Message::SmoothingChanged).step(0.01f32),
+            ]
+            .spacing(4),
+            toggler(self.gaze_correction)
+                .label("Gaze correction (capped pupil shift)")
+                .on_toggle(Message::GazeToggled),
+            column![
+                text(format!("Gaze strength: {:.2}", self.gaze_strength)),
+                slider(0.0..=1.0, self.gaze_strength, Message::GazeStrengthChanged).step(0.01f32),
             ]
             .spacing(4),
             column![
