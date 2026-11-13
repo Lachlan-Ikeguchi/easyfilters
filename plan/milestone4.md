@@ -192,3 +192,52 @@ pipeline thread driven by shared settings.
   several-minute first build on 12 cores, incremental after.
 - **Debug builds stay ~3 fps** (tract unoptimized) — GUI perf checks must use
   `--release`.
+
+## Implementation findings (2026-11-13, verified live)
+
+- **iced feature correction:** the `thread-pool` executor backend has an empty
+  `time` module — `iced::time::every` (needed for the preview subscription)
+  only exists with the `smol` backend. Cargo.toml therefore uses
+  `"smol"` instead of `"thread-pool"` (both pure Rust).
+- **ksni needs libdbus at build time:** ksni 0.2 (pinned by tray-item 0.10)
+  uses the C `dbus` crate (libdbus-sys), not zbus — `pkg-config dbus-1` must
+  resolve. The host has no dbus dev package, so host builds use a shim
+  `dbus-1.pc` (scratchpad) pointing at the nix store dbus dev/lib outputs;
+  the flake just adds `dbus` to buildInputs (plus `dbus.lib` to the wrapped
+  binary's LD_LIBRARY_PATH). Runtime libdbus-1.so.3 is a system lib here.
+- **Threading works as designed:** pipeline thread + iced main loop + tray
+  thread, coordinated only through `Shared`. Live-verified on Xwayland `:1`:
+  327 preview frames in 12 s (~27 fps GUI refresh vs 29.7 fps pipeline) with
+  `RUST_LOG=easyfilters=debug` (`new preview frame` log per frame), tray icon
+  registered on the KDE StatusNotifierWatcher (Title "EasyFilters"), SIGINT
+  → pipeline "stream stopped" → GUI exits → process gone.
+- **Refactor perf-neutral:** release `--no-gui --mode blur` at 1280x720@30:
+  **29.77 fps, 0 drops**, decode 2.3 / infer 6.7 / composite 5.6 / encode
+  1.5 ms — the M3 bar (29.8 fps) unchanged with the pipeline on its own
+  thread and per-frame settings snapshots.
+- **Loopback readback caveat (environment, not a regression):** with Discord
+  holding `/dev/video0` via PipeWire, direct V4L2 readers get EBUSY; readback
+  then works through the PipeWire source node instead
+  (`gst-launch-1.0 pipewiresrc path=149 ! image/jpeg ! jpegdec ! ...` — 5 valid
+  1280x720 MJPG frames captured while the app streamed).
+- **Config precedence verified live:** `--config` file with `mode = "mask"`
+  resolves to mask; adding `--mode blur` on the CLI wins. `save_current`
+  (GUI/tray changes) writes the merged settings atomically (tmp+rename);
+  unit-tested roundtrip plus a `toggle_filtering` test that flips the flag
+  and asserts the persisted `enabled = false`.
+- **cargo test: 51 passed** — new coverage: config load/save/roundtrip/
+  partial/malformed, resolve precedence, Mode clap↔serde name agreement,
+  preview-slot gating, tray toggle, GUI `WxH` parsing.
+- **Build process note:** long `cargo build --release` runs must go through the
+  managed process namespace (tools.process.start) — nohup'd background
+  cargo from a timed-out shell gets reaped mid-build.
+- **`nix build .#default` passes** (EXIT=0, release profile 11m35s in the
+  sandbox, deps vendored from Cargo.lock; wrapped `result/bin/easyfilters
+  --help` runs). The flake's new `dbus`/`wayland`/`libxkbcommon` buildInputs
+  cover libdbus-sys and winit. Only warning is the pre-existing
+  function-item-cast in the signal handler.
+- **Not verified here:** clicking the actual GUI controls (no input injection
+  in this session; screenshots/D-Bus menu activation are blocked by the
+  sandbox approval policy). The control handlers are thin wrappers over
+  `Shared` + `save_current`, both unit-tested, and the preview/tray/signal
+  paths were verified live as described above.
