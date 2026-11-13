@@ -208,10 +208,6 @@ impl ShiftSmoother {
         self.raw_window.clear();
     }
 
-    pub fn state(&self) -> Option<(f32, f32)> {
-        self.state
-    }
-
     /// Record a raw measurement; returns false when the jitter gate trips
     /// (variance over the window above JITTER_VAR_MAX) and the caller should
     /// hold the current state instead of updating.
@@ -777,7 +773,8 @@ mod tests {
         }
         assert!(s.jitter_var() > JITTER_VAR_MAX);
         s.reset();
-        assert_eq!(s.state(), None);
+        // after reset the EMA starts fresh from the next raw measurement
+        assert_eq!(s.update((1.0, 1.0)), (1.0, 1.0));
         assert!(s.observe((1.0, 1.0)));
     }
 
