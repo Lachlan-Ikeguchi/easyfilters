@@ -106,6 +106,38 @@ per frame, single-threaded (release build). The camera input itself
 fluctuates between ~15 and 30 fps with system load; the app tracks the input
 with 0 drops either way.
 
+## Milestone 4: GUI + tray + config
+
+The pipeline now runs as a background thread and the app is a small iced
+window (software renderer, no GPU needed) with a live preview taken straight
+from the compositing stage, plus a system-tray icon:
+
+```sh
+./target/release/easyfilters                 # GUI + tray (needs a display)
+./target/release/easyfilters --no-gui        # headless, milestone 1-3 CLI behavior
+./target/release/easyfilters --config /tmp/x.toml   # use another config file
+```
+
+Controls in the window: filtering on/off, mode (`passthrough`/`overlay`/
+`mask`/`blur`/`replace`), blur strength, mask smoothing, background image path
+(Enter to apply), and input camera / resolution / fps (Apply restarts the
+stream live). Every change takes effect on the next frame and is saved to the
+config. Without `DISPLAY`/`WAYLAND_DISPLAY` the app falls back to headless
+automatically.
+
+Settings persist in `$XDG_CONFIG_HOME/easyfilters/config.toml`
+(`~/.config/easyfilters/config.toml` by default), written atomically on every
+change. Precedence: **CLI flag > config file > built-in default**, e.g.
+`--mode blur` on the command line beats `mode = "replace"` in the config.
+`--disable` forces passthrough. The tray menu (a D-Bus StatusNotifierItem, no
+gtk/appindicator needed) has "Toggle filtering" and "Quit".
+
+Build notes: the GUI uses iced with the `tiny-skia` renderer only (no
+wgpu/shaderc); the tray uses `tray-item`'s `ksni` feature, which links
+`libdbus` at build time (provided by the nix flake; on a plain host set
+`PKG_CONFIG_PATH` to a `dbus-1.pc`). winit's wayland/x11 backends need
+`libwayland`/`libxkbcommon` at runtime — again provided by the flake.
+
 ## Tests
 
 Unit tests use Rust's built-in test harness — no external framework needed:
@@ -127,6 +159,12 @@ Coverage today:
 - `src/segmentation.rs` — input validation (dimensions, buffer length) plus
   a real inference pass over the bundled ONNX model asserting a full-size
   binary mask. This one takes a few seconds in a debug build.
-- `src/main.rs` — `parse_fourcc`, `model_path` precedence, `now_timeval`.
+- `src/main.rs` — config resolution precedence (CLI > config > default).
+- `src/pipeline.rs` — `parse_fourcc`, `resolve_model` precedence, `now_timeval`.
+- `src/settings.rs` — `Mode` clap/serde name agreement, preview-slot gating.
+- `src/config.rs` — TOML load/save roundtrip, atomic save, missing/malformed
+  file handling, default path.
+- `src/tray.rs` — `toggle_filtering` flips the shared flag and persists it.
+- `src/gui.rs` — device-field parsing (`WxH`).
 - `src/v4l2.rs` is not unit-tested: it drives real `/dev/video*` nodes.
   Exercise it via `--list` and `--self-test` instead.

@@ -124,6 +124,7 @@ impl App {
                     let mut slot = self.shared.preview.lock().unwrap();
                     if let Some(p) = slot.take() {
                         if p.seq != self.preview_seq {
+                            tracing::debug!(seq = p.seq, w = p.width, h = p.height, "new preview frame");
                             self.preview = Some(Handle::from_rgba(p.width, p.height, p.rgba));
                             self.preview_seq = p.seq;
                         }

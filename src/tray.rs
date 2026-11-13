@@ -5,7 +5,7 @@
 //! register (no StatusNotifierWatcher on the session bus) is a warning, never
 //! fatal.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -36,6 +36,20 @@ fn icon() -> IconSource {
     }
 }
 
+/// Flip the enabled flag and persist the config. Called by the tray menu item
+/// (and unit-tested directly).
+pub(crate) fn toggle_filtering(shared: &Shared, config_path: &Path) {
+    let enabled = {
+        let mut s = shared.settings.write().unwrap();
+        s.enabled = !s.enabled;
+        s.enabled
+    };
+    if let Err(e) = crate::config::save_current(config_path, shared) {
+        warn!(error = %e, "could not save config after toggle");
+    }
+    info!(enabled, "toggled filtering");
+}
+
 /// Spawn the tray thread. The returned handle finishes when `shared` stops.
 pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -53,15 +67,7 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
         let toggle_shared = shared.clone();
         let toggle_config = config_path.clone();
         if let Err(e) = tray.add_menu_item("Toggle filtering", move || {
-            let enabled = {
-                let mut s = toggle_shared.settings.write().unwrap();
-                s.enabled = !s.enabled;
-                s.enabled
-            };
-            if let Err(e) = crate::config::save_current(&toggle_config, &toggle_shared) {
-                warn!(error = %e, "could not save config after tray toggle");
-            }
-            info!(enabled, "tray: toggled filtering");
+            toggle_filtering(&toggle_shared, &toggle_config);
         }) {
             warn!(error = %e, "tray: could not add toggle item");
         }
@@ -81,4 +87,31 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             thread::sleep(Duration::from_millis(200));
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{DeviceParams, Settings};
+
+    #[test]
+    fn toggle_filtering_flips_and_persists() {
+        let dir = std::env::temp_dir().join(format!("easyfilters-test-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let shared = Shared::new(Settings::default(), DeviceParams::default());
+        assert!(shared.snapshot_settings().enabled);
+
+        toggle_filtering(&shared, &path);
+        assert!(!shared.snapshot_settings().enabled);
+        let cfg = crate::config::load(&path).unwrap();
+        assert_eq!(cfg.enabled, Some(false));
+        assert_eq!(cfg.mode, Some(crate::settings::Mode::Replace));
+
+        toggle_filtering(&shared, &path);
+        assert!(shared.snapshot_settings().enabled);
+        assert_eq!(crate::config::load(&path).unwrap().enabled, Some(true));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
