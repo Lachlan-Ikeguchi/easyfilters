@@ -85,6 +85,16 @@
                     pkgs.wayland
                     pkgs.libxkbcommon
                     pkgs.dbus.lib
+                    # Milestone 6: winit's X11 backend dlopens these at
+                    # runtime (Xwayland / X11-only sessions); the Wayland
+                    # path does not need them.
+                    pkgs.xorg.libX11
+                    pkgs.xorg.libXcursor
+                    pkgs.xorg.libXi
+                    pkgs.xorg.libXrandr
+                    pkgs.xorg.libXext
+                    pkgs.xorg.libXinerama
+                    pkgs.xorg.libXxf86vm
                   ]
                 }"
             '';
@@ -142,13 +152,21 @@
             wayland
             libxkbcommon
             dbus
+            # X11 backend runtime libs (milestone 6: GUI on Xwayland/X11)
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXi
+            xorg.libXrandr
+            xorg.libXext
+            xorg.libXinerama
+            xorg.libXxf86vm
           ];
           # Same env the package build uses, so plain `cargo build` inside
           # `nix develop` works without manual OPENCV_*/LIBCLANG_PATH exports.
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           V4L2R_VIDEODEV2_H_PATH = "${pkgs.linuxHeaders}/include/linux";
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib:${pkgs.wayland}/lib:${pkgs.libxkbcommon}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${pkgs.llvmPackages.libclang.lib}/lib:${pkgs.wayland}/lib:${pkgs.libxkbcommon}/lib:${pkgs.lib.makeLibraryPath [ pkgs.xorg.libX11 pkgs.xorg.libXcursor pkgs.xorg.libXi pkgs.xorg.libXrandr pkgs.xorg.libXext pkgs.xorg.libXinerama pkgs.xorg.libXxf86vm ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           '';
         };
       });

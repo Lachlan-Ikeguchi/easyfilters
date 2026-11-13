@@ -130,7 +130,8 @@ Settings persist in `$XDG_CONFIG_HOME/easyfilters/config.toml`
 change. Precedence: **CLI flag > config file > built-in default**, e.g.
 `--mode blur` on the command line beats `mode = "replace"` in the config.
 `--disable` forces passthrough. The tray menu (a D-Bus StatusNotifierItem, no
-gtk/appindicator needed) has "Toggle filtering" and "Quit".
+gtk/appindicator needed) has "Toggle filtering", "Toggle gaze correction",
+"Show/Hide window" (milestone 6) and "Quit".
 
 Build notes: the GUI uses iced with the `tiny-skia` renderer only (no
 wgpu/shaderc); the tray uses `tray-item`'s `ksni` feature, which links
@@ -165,6 +166,44 @@ Measured at 1280x720@30 MJPG with gaze on: 29.8 fps, 0 drops,
 gaze stage ~4.3 ms/frame (detector every frame, mesh every 3rd, remap per
 frame) — same fps as milestone 4 with gaze off (gaze_ms = 0).
 
+## Milestone 6: run in the background, launch at login, packaging
+
+Closing the GUI window now **hides it to the tray** instead of quitting
+(`close_to_tray = true` by default) — filtering keeps running and the tray
+is the control surface. The tray menu gained "Show/Hide window" (plus the
+existing toggles and "Quit", which still stops the app). Start with the
+window hidden (tray only) via `--start-minimized`:
+
+```sh
+./target/release/easyfilters --start-minimized   # no window, tray only, filtering runs
+./target/release/easyfilters --no-gui             # fully headless (servers), unchanged
+```
+
+Launch at login via an XDG autostart entry:
+
+```sh
+./target/release/easyfilters --install-autostart     # writes ~/.config/autostart/easyfilters.desktop
+./target/release/easyfilters --uninstall-autostart   # removes it
+```
+
+On NixOS, `easyfilters.autostart = true;` in the flake's module starts the
+package as a systemd user service (`--start-minimized`) at graphical login
+instead. A single-instance lock (`$XDG_RUNTIME_DIR/easyfilters.lock`) makes
+a second launch print "already running (pid N)" and exit 0 instead of
+fighting over the camera with a cryptic EBUSY. Packaging: the nix package
+(0.2.0) now ships `share/applications/easyfilters.desktop` + a hicolor SVG
+icon, and the wrapped binary carries the X11 runtime libs winit dlopens.
+
+Smaller polish in the same milestone: the GUI status line shows the
+actually-negotiated resolution/fps (the startup log prints
+`requested=...` next to the negotiated values), `--format` is validated
+before any device is opened, and a camera/loopback held by another app logs
+a targeted "device busy" hint instead of only the generic retry message.
+
+Measured at 1280x720@30 MJPG in a quiet window: `--no-gui --mode blur` and
+`--start-minimized` both run at ~29.8 fps, 0 drops — the milestone 4/5 bar
+unchanged.
+
 ## Tests
 
 Unit tests use Rust's built-in test harness — no external framework needed:
@@ -192,7 +231,11 @@ Coverage today:
 - `src/config.rs` — TOML load/save roundtrip, atomic save, missing/malformed
   file handling, default path.
 - `src/tray.rs` — `toggle_filtering` / `toggle_gaze` flip the shared flags
-  and persist them.
+  and persist them; the Show/Hide-window flip of `Shared::show_window`.
+- `src/lock.rs` — single-instance `flock`: second acquire on the same file
+  reports Busy with the holder's pid; lock released on drop.
+- `src/autostart.rs` — `.desktop` entry content, idempotent atomic install,
+  uninstall reporting, default autostart dir.
 - `src/gaze.rs` — eye geometry from synthetic 478-landmark sets (centering,
   direction, hard cap, strength scaling, roll/blink/jitter gates), EMA +
   deadband smoother, `apply_shift` remap on a synthetic iris disc (moves the

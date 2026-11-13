@@ -199,6 +199,58 @@ shut the app down — `src/main.rs` / `plan/milestone4.md`).
   fails, without errno matching.
 - **Debug builds stay ~3 fps** — all live verification in `--release`.
 
-## Implementation findings (appended after live verification, 2026-11-13)
+## Implementation findings (all verified live, 2026-11-13, release build)
 
-- (to fill in during step 7, like M4/M5)
+- **Flag rename:** the plan's `--background` collided with the existing
+  `--background <image>` flag (clap rejects duplicate longs), so the
+  start-minimized flag shipped as `--start-minimized` (config key
+  `start_minimized`). Plan text updated to match.
+- **iced 0.14 window API:** there are no `window::hide`/`show` tasks —
+  hiding is `window::set_mode(id, window::Mode::Hidden)`. The builder's
+  `exit_on_close_request(false)` plus a `window::close_requests()`
+  subscription (yields the `window::Id`) drive close-to-tray; the id used
+  for tray-driven show/hide on Tick is captured from
+  `window::resize_events()` (fires once at startup).
+- **Close-to-tray verified live on Xwayland `:1`:** window listed by
+  `wmctrl -l`; `wmctrl -c EasyFilters` → window gone, process alive,
+  pipeline stats keep flowing, `/dev/video0` readback still filtered
+  (20/20 frames, 0 black). With `close_to_tray = false` in the config the
+  same close exits the process cleanly (exit 0). SIGINT shutdown unchanged.
+- **`--start-minimized` verified live:** no window in `wmctrl -l`, tray SNI
+  item registered (`org.kde.StatusNotifierItem-<pid>-1` in
+  `busctl --user list`), pipeline at 29.79 fps / 0 drops at 1280x720@30.
+- **Single-instance lock verified live:** first `--no-gui` run holds
+  `/run/user/1000/easyfilters.lock` (contains its pid, 128501); a second
+  launch prints "easyfilters is already running (pid 128501); exiting." and
+  exits 0 without touching the camera. `--list`/`--self-test` skip the lock.
+- **`--format XYZAB`** fails immediately at startup (exit 1, "must be a
+  4-character fourcc") before any device is opened.
+- **Negotiate log:** `negotiated format ... requested="1280x720@30"
+  width=1280 height=720 fps=30.0 ...`; `Stats.negotiated` feeds the GUI
+  status line.
+- **Autostart:** install/uninstall/idempotency unit-tested (3 tests).
+  Running the real `--install-autostart` against `~/.config/autostart` is
+  blocked by the sandbox approval policy, so the live CLI path was not
+  exercised against the real home dir — the unit tests cover the file
+  content (`Exec=<exe> --start-minimized`) and the atomic write.
+- **NixOS module:** `nix flake check` green — package `easyfilters-0.2.0`
+  builds, the smoke check runs `--help` and asserts
+  `share/applications/easyfilters.desktop` + `share/icons/hicolor/scalable/apps/easyfilters.svg`
+  exist in `$out`, and the NixOS module is checked. A full
+  `nixpkgs.lib.nixosSystem` eval with `easyfilters.autostart = true` yields
+  `systemd.user.services.easyfilters` with
+  `ExecStart = ".../easyfilters-0.2.0/bin/easyfilters --start-minimized"`.
+- **X11 runtime libs:** the GUI on Xwayland needed `libX11` etc. on
+  `LD_LIBRARY_PATH` (winit dlopens them; the dev shell only ships
+  wayland/xkbcommon/dbus) — fetched via `nix build nixpkgs#xorg.libX11 …`.
+  The flake now adds the xorg libs to the wrapped binary's LD_LIBRARY_PATH
+  and to the devShell, so the packaged GUI works on X11-only sessions too.
+- **Regression:** quiet `--no-gui --mode blur` at 1280x720@30: 29.77–29.85
+  fps, 0 drops (M4/M5 bar unchanged). `cargo test --release`: **81 passed,
+  0 failed** (10 new: lock ×3, autostart ×3, `show_window` init, tray
+  show/hide flip, resolve precedence for the new flags, config roundtrip).
+- **Not verified here (sandbox approval policy, same as M4):** clicking
+  tray menu items / D-Bus menu activation and screenshots. Tray registration
+  itself was confirmed via `busctl --user list`; the Show/Hide flip and the
+  GUI edge handling are unit-tested, and close-to-tray was verified live
+  via `wmctrl -c`.
