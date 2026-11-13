@@ -1,0 +1,24 @@
+Face models bundled in this directory are Google MediaPipe models, licensed
+under the Apache License 2.0 (see LICENSE-mediapipe-face-landmarks.txt for the
+full text). Format conversions only — no retraining or weight changes.
+
+- face_landmarks_478.onnx
+  MediaPipe Face Mesh V2 landmark network (face_landmarks_detector.tflite
+  inside face_landmarker.task, float16 bundle v1), converted to ONNX with
+  tf2onnx (opset 17). Source:
+  https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+  Export published by naklitechie/face-landmarks-onnx on Hugging Face:
+  https://huggingface.co/naklitechie/face-landmarks-onnx
+  SHA-256: f38c3321ceffbc9e95103480ad38cc3f52e7e1bde2bcee7cd9355d0b9138ac0c
+  Input: float32 [1, 256, 256, 3] RGB in [0, 1] (NHWC face crop).
+  Output: [1, 1, 1, 1434] = 478 landmarks x (x, y, z) in input pixels, plus
+  face-presence logit.
+
+- blaze_face_short_range.onnx
+  MediaPipe BlazeFace short-range face detector, exported to ONNX.
+  Source model: https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float32/1/blaze_face_short_range.tflite
+  Export published by garavv/blazeface-onnx on Hugging Face:
+  https://huggingface.co/garavv/blazeface-onnx
+  SHA-256: 564740c5146673c840257402cee8309161848e48e64d277a862ab4d501adf8a5
+  Input: float32 [1, 3, 128, 128] RGB (see src/gaze.rs for the exact
+  normalization, verified against the model's behavior).
