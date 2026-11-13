@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=EasyFilters
+Comment=Virtual camera with background filters
+Exec=easyfilters
+Icon=easyfilters
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=camera;virtual;background;blur;filter;

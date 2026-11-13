@@ -20,7 +20,9 @@
           libclangLib = pkgs.llvmPackages.libclang.lib;
           easyfilters = pkgs.rustPlatform.buildRustPackage {
             pname = "easyfilters";
-            version = "0.1.0";
+            # Milestone 6: first packaged release (desktop file + icon,
+            # NixOS autostart option).
+            version = "0.2.0";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
 
@@ -67,6 +69,12 @@
                  assets/face_landmarks_478.onnx \
                  assets/blaze_face_short_range.onnx \
                  "$out/share/easyfilters/"
+              # Milestone 6 packaging: app-menu entry + hicolor icon (the
+              # same green rounded square the tray icon is generated from).
+              mkdir -p "$out/share/applications" \
+                       "$out/share/icons/hicolor/scalable/apps"
+              cp packaging/easyfilters.desktop "$out/share/applications/"
+              cp assets/easyfilters.svg "$out/share/icons/hicolor/scalable/apps/easyfilters.svg"
               wrapProgram "$out/bin/easyfilters" \
                 --set-default EASYFILTERS_MODEL "$out/share/easyfilters/selfie_segmentation_landscape.onnx" \
                 --set-default EASYFILTERS_FACE_MODEL "$out/share/easyfilters/face_landmarks_478.onnx" \
@@ -106,7 +114,12 @@
         # Device-dependent paths (--list/--self-test) need /dev/video*, which
         # the sandbox does not have.
         default = pkgs.runCommand "easyfilters-smoke" { } ''
-          ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/easyfilters --help > "$out"
+          pkg=${self.packages.${pkgs.stdenv.hostPlatform.system}.default}
+          $pkg/bin/easyfilters --help > "$out"
+          # Milestone 6: the packaged desktop file + icon must be present.
+          test -f "$pkg/share/applications/easyfilters.desktop"
+          test -f "$pkg/share/icons/hicolor/scalable/apps/easyfilters.svg"
+          grep -q "Icon=easyfilters" "$pkg/share/applications/easyfilters.desktop"
         '';
       });
 
@@ -165,6 +178,11 @@
               default = false;
               description = "exclusive_caps=1 hides the device from PipeWire clients; false exposes it to both PipeWire and V4L2 apps.";
             };
+            autostart = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Start easyfilters at login as a systemd user service (window hidden, tray only) via --start-minimized. The user still needs the \"video\" group for /dev/video*.";
+            };
           };
           config = lib.mkIf cfg.enable {
             boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
@@ -176,6 +194,18 @@
             environment.systemPackages = [ cfg.package ];
             # /dev/video* nodes are accessible to the "video" group by default
             # udev rules; add your user to it if not already.
+            # Milestone 6: launch at login as a user service (graphical
+            # session), running in the background with the window hidden.
+            systemd.user.services.easyfilters = lib.mkIf cfg.autostart {
+              description = "EasyFilters virtual camera (background, tray only)";
+              wantedBy = [ "graphical-session.target" ];
+              after = [ "graphical-session.target" ];
+              serviceConfig = {
+                ExecStart = "${cfg.package}/bin/easyfilters --start-minimized";
+                Restart = "on-failure";
+                RestartSec = 5;
+              };
+            };
           };
         };
     };
