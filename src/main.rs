@@ -100,6 +100,12 @@ struct Args {
     /// Disable gaze correction (overrides `gaze_correction` in the config)
     #[arg(long)]
     no_gaze: bool,
+    /// Mirror the whole video feed horizontally (default: off)
+    #[arg(long)]
+    mirror: bool,
+    /// Disable feed mirroring (overrides `mirror` in the config)
+    #[arg(long)]
+    no_mirror: bool,
     /// Milestone 7: disable the native PipeWire camera node (default: on)
     #[arg(long)]
     no_pipewire: bool,
@@ -163,6 +169,13 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
     } else {
         cfg.start_minimized
     };
+    let mirror = if args.mirror {
+        Some(true)
+    } else if args.no_mirror {
+        Some(false)
+    } else {
+        cfg.mirror
+    };
     Resolved {
         settings: Settings {
             enabled: enabled.unwrap_or(true),
@@ -172,6 +185,7 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             background: args.background.clone().or_else(|| cfg.background.clone()),
             gaze_correction: gaze.unwrap_or(false),
             gaze_strength: args.gaze_strength.or(cfg.gaze_strength).unwrap_or(0.5),
+            mirror: mirror.unwrap_or(false),
             close_to_tray: cfg.close_to_tray.unwrap_or(true),
             start_minimized: start_minimized.unwrap_or(false),
             pipewire: !args.no_pipewire && cfg.pipewire.unwrap_or(true),
@@ -508,6 +522,24 @@ mod tests {
             resolve(&args, &cfg).device.face_model,
             Some(PathBuf::from("/tmp/cfg.onnx"))
         );
+    }
+
+    #[test]
+    fn resolve_mirror_flags_and_defaults() {
+        // default: off
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        assert!(!resolve(&args, &Config::default()).settings.mirror);
+        // config wins over default
+        let cfg = Config {
+            mirror: Some(true),
+            ..Default::default()
+        };
+        assert!(resolve(&args, &cfg).settings.mirror);
+        // --mirror / --no-mirror beat the config
+        let args = Args::try_parse_from(["easyfilters", "--mirror"]).unwrap();
+        assert!(resolve(&args, &Config::default()).settings.mirror);
+        let args = Args::try_parse_from(["easyfilters", "--no-mirror"]).unwrap();
+        assert!(!resolve(&args, &cfg).settings.mirror);
     }
 
     #[test]

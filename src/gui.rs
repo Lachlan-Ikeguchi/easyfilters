@@ -75,6 +75,8 @@ struct App {
     mask_smoothing: f32,
     gaze_correction: bool,
     gaze_strength: f32,
+    // Mirror the whole feed horizontally.
+    mirror: bool,
     // Milestone 6: close the window to the tray instead of quitting.
     close_to_tray: bool,
     // Window bookkeeping for hide/show (tray "Show/Hide window").
@@ -101,6 +103,7 @@ enum Message {
     SmoothingChanged(f32),
     GazeToggled(bool),
     GazeStrengthChanged(f32),
+    MirrorToggled(bool),
     CloseToTrayToggled(bool),
     /// The window was asked to close (WM close button). Milestone 6:
     /// hide to tray when `close_to_tray`, else quit.
@@ -132,6 +135,7 @@ impl App {
             mask_smoothing: s.mask_smoothing,
             gaze_correction: s.gaze_correction,
             gaze_strength: s.gaze_strength,
+            mirror: s.mirror,
             close_to_tray: s.close_to_tray,
             window_id: None,
             window_visible: !s.start_minimized,
@@ -164,6 +168,7 @@ impl App {
             s.mask_smoothing = self.mask_smoothing;
             s.gaze_correction = self.gaze_correction;
             s.gaze_strength = self.gaze_strength;
+            s.mirror = self.mirror;
             s.close_to_tray = self.close_to_tray;
         }
         if let Err(e) = config::save_current(&self.config_path, &self.shared) {
@@ -230,6 +235,9 @@ impl App {
                 }
                 if (s.gaze_strength - self.gaze_strength).abs() > 1e-6 {
                     self.gaze_strength = s.gaze_strength;
+                }
+                if s.mirror != self.mirror {
+                    self.mirror = s.mirror;
                 }
                 if s.close_to_tray != self.close_to_tray {
                     self.close_to_tray = s.close_to_tray;
@@ -312,6 +320,11 @@ impl App {
             }
             Message::GazeStrengthChanged(v) => {
                 self.gaze_strength = v;
+                self.apply_and_save();
+                Task::none()
+            }
+            Message::MirrorToggled(v) => {
+                self.mirror = v;
                 self.apply_and_save();
                 Task::none()
             }
@@ -470,6 +483,9 @@ impl App {
                 slider(0.0..=1.0, self.gaze_strength, Message::GazeStrengthChanged).step(0.01f32),
             ]
             .spacing(4),
+            toggler(self.mirror)
+                .label("Mirror feed (flip horizontally)")
+                .on_toggle(Message::MirrorToggled),
             column![
                 text("Background image (empty = #003200), Enter to apply:"),
                 text_input("/path/to/bg.jpg", &self.background_text)

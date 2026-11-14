@@ -2,7 +2,8 @@
 //! pure-Rust StatusNotifierItem over D-Bus, so no gtk3/libappindicator system
 //! libraries are needed and it works on any SNI host (KDE Plasma, COSMIC, …).
 //! Menu: toggle filtering on/off (persisted to the config), toggle gaze
-//! correction, show/hide the GUI window (milestone 6 — this is what makes
+//! correction, toggle feed mirroring, show/hide the GUI window
+//! (milestone 6 — this is what makes
 //! "run in the background" usable: close the window and the tray keeps the
 //! app alive), quit. Failure to register (no StatusNotifierWatcher on the
 //! session bus) is a warning, never fatal.
@@ -66,6 +67,19 @@ pub(crate) fn toggle_gaze(shared: &Shared, config_path: &Path) {
     info!(gaze_correction = on, "toggled gaze correction");
 }
 
+/// Flip the mirror flag and persist the config.
+pub(crate) fn toggle_mirror(shared: &Shared, config_path: &Path) {
+    let on = {
+        let mut s = shared.settings.write().unwrap();
+        s.mirror = !s.mirror;
+        s.mirror
+    };
+    if let Err(e) = crate::config::save_current(config_path, shared) {
+        warn!(error = %e, "could not save config after mirror toggle");
+    }
+    info!(mirror = on, "toggled feed mirroring");
+}
+
 /// Spawn the tray thread. The returned handle finishes when `shared` stops.
 pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -94,6 +108,14 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             toggle_gaze(&gaze_shared, &gaze_config);
         }) {
             warn!(error = %e, "tray: could not add gaze toggle item");
+        }
+
+        let mirror_shared = shared.clone();
+        let mirror_config = config_path.clone();
+        if let Err(e) = tray.add_menu_item("Toggle mirror", move || {
+            toggle_mirror(&mirror_shared, &mirror_config);
+        }) {
+            warn!(error = %e, "tray: could not add mirror toggle item");
         }
 
         // Milestone 6: show/hide the GUI window. The GUI watches edges of
@@ -179,6 +201,25 @@ mod tests {
         toggle_gaze(&shared, &path);
         assert!(!shared.snapshot_settings().gaze_correction);
         assert_eq!(crate::config::load(&path).unwrap().gaze_correction, Some(false));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn toggle_mirror_flips_and_persists() {
+        let dir = std::env::temp_dir().join(format!("easyfilters-test-mirror-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let shared = Shared::new(Settings::default(), DeviceParams::default());
+        assert!(!shared.snapshot_settings().mirror); // off by default
+
+        toggle_mirror(&shared, &path);
+        assert!(shared.snapshot_settings().mirror);
+        assert_eq!(crate::config::load(&path).unwrap().mirror, Some(true));
+
+        toggle_mirror(&shared, &path);
+        assert!(!shared.snapshot_settings().mirror);
+        assert_eq!(crate::config::load(&path).unwrap().mirror, Some(false));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

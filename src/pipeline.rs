@@ -376,8 +376,26 @@ fn filter_frame(
     let s = shared.snapshot_settings();
 
     // Passthrough (filter disabled or mode=passthrough): byte-copy. Decode
-    // only for the preview when a GUI is attached.
+    // only for the preview when a GUI is attached. With mirror on the
+    // byte-copy cannot flip, so decode -> flip -> re-encode instead.
     if !s.enabled || s.mode == Mode::Passthrough {
+        if s.mirror {
+            let img = match frame::decode_mjpg(src) {
+                Ok(img) => img,
+                Err(e) => {
+                    warn!(error = %e, "dropping undecodable frame");
+                    return Ok(None);
+                }
+            };
+            let flipped = frame::flip_horizontal(&img)?;
+            let preview = if produce_rgba {
+                mat_to_rgba(&flipped).ok()
+            } else {
+                None
+            };
+            let jpeg = frame::encode_jpeg(&flipped, JPEG_QUALITY)?;
+            return Ok(Some((jpeg, Stats::default(), preview)));
+        }
         let preview = if produce_rgba {
             frame::decode_mjpg(src).ok().and_then(|img| mat_to_rgba(&img).ok())
         } else {
@@ -489,6 +507,13 @@ fn filter_frame(
     } else {
         0.0
     };
+
+    // Mirror the whole feed: flip the final composited frame horizontally,
+    // so the loopback, the PipeWire node and the GUI preview all see the
+    // same mirrored image (a replaced background is mirrored too).
+    if s.mirror {
+        out_img = frame::flip_horizontal(&out_img)?;
+    }
 
     let preview = if produce_rgba {
         Some(mat_to_rgba(&out_img)?)

@@ -71,6 +71,11 @@ pub struct Settings {
     pub gaze_correction: bool,
     /// Gaze shift scale, 0..=1 (the absolute pixel cap applies on top).
     pub gaze_strength: f32,
+    /// Mirror the whole output feed horizontally (flip around the vertical
+    /// axis — loopback, PipeWire node and preview alike). Off by default:
+    /// the raw camera feed is not self-mirrored and some consumers want
+    /// the true orientation.
+    pub mirror: bool,
     /// Milestone 6: closing the GUI window hides it to the tray instead of
     /// quitting (filtering keeps running; tray "Quit" still stops the app).
     pub close_to_tray: bool,
@@ -95,6 +100,7 @@ impl Default for Settings {
             background: None,
             gaze_correction: false,
             gaze_strength: 0.5,
+            mirror: false,
             close_to_tray: true,
             start_minimized: false,
             pipewire: true,

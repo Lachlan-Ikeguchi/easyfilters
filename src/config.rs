@@ -21,6 +21,8 @@ pub struct Config {
     pub background: Option<PathBuf>,
     pub gaze_correction: Option<bool>,
     pub gaze_strength: Option<f32>,
+    /// Mirror the whole output feed horizontally (default: off).
+    pub mirror: Option<bool>,
     /// Milestone 6: close the GUI window to the tray instead of quitting.
     pub close_to_tray: Option<bool>,
     /// Milestone 6: start with the window hidden (tray only).
@@ -91,6 +93,7 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         background: s.background.clone(),
         gaze_correction: Some(s.gaze_correction),
         gaze_strength: Some(s.gaze_strength),
+        mirror: Some(s.mirror),
         close_to_tray: Some(s.close_to_tray),
         start_minimized: Some(s.start_minimized),
         pipewire: Some(s.pipewire),
@@ -154,6 +157,7 @@ mod tests {
             background: Some(PathBuf::from("/tmp/bg.jpg")),
             gaze_correction: Some(true),
             gaze_strength: Some(0.75),
+            mirror: Some(true),
             close_to_tray: Some(false),
             start_minimized: Some(true),
             pipewire: Some(true),

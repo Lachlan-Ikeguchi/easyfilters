@@ -38,6 +38,13 @@ pub fn resize(src: &Mat, w: u32, h: u32) -> Result<Mat> {
     Ok(dst)
 }
 
+/// Horizontal flip (mirror around the vertical axis, flip_code = 1).
+pub fn flip_horizontal(src: &Mat) -> Result<Mat> {
+    let mut dst = Mat::default();
+    opencv::core::flip(src, &mut dst, 1)?;
+    Ok(dst)
+}
+
 /// Gaussian blur with a kernel size derived from `sigma` (odd, >= 3).
 pub fn gaussian_blur(src: &Mat, sigma: f64) -> Result<Mat> {
     let k = ((sigma * 6.0).ceil() as i32).max(3) | 1;
@@ -244,6 +251,41 @@ mod tests {
             }
         }
         img
+    }
+
+    /// 4x2 BGR image, left column white, rest black (vertical edge at x=1).
+    fn left_white_column() -> Mat {
+        let mut img =
+            Mat::new_rows_cols_with_default(2, 4, CV_8UC3, Scalar::all(0.0)).unwrap();
+        let data = img.data_bytes_mut().unwrap();
+        for y in 0..2 {
+            let i = (y * 4) * 3;
+            data[i..i + 3].copy_from_slice(&[255, 255, 255]);
+        }
+        img
+    }
+
+    #[test]
+    fn flip_horizontal_mirrors_columns_and_keeps_source() {
+        let img = left_white_column();
+        let out = flip_horizontal(&img).unwrap();
+        assert_eq!(out.cols(), 4);
+        assert_eq!(out.rows(), 2);
+        assert_eq!(out.channels(), 3);
+        let d = out.data_bytes().unwrap();
+        // left column became black, right column is now white
+        assert_eq!(&d[..3], &[0, 0, 0]);
+        let i = (1 * 4 + 3) * 3; // bottom-right pixel
+        assert_eq!(&d[i..i + 3], &[255, 255, 255]);
+        // source untouched
+        assert_eq!(&img.data_bytes().unwrap()[..3], &[255, 255, 255]);
+    }
+
+    #[test]
+    fn flip_horizontal_twice_is_identity() {
+        let img = left_white_column();
+        let twice = flip_horizontal(&flip_horizontal(&img).unwrap()).unwrap();
+        assert_eq!(twice.data_bytes().unwrap(), img.data_bytes().unwrap());
     }
 
     #[test]
