@@ -88,6 +88,9 @@ pub struct Settings {
     /// camera, browsers via the portal) can consume on the pipewire builds
     /// that crash on v4l2loopback streams.
     pub pipewire: bool,
+    /// Milestone 8: directory for recordings (None = $XDG_VIDEOS_DIR or
+    /// ~/Videos). The `--record <path>` CLI flag overrides this for one run.
+    pub record_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -104,6 +107,7 @@ impl Default for Settings {
             close_to_tray: true,
             start_minimized: false,
             pipewire: true,
+            record_dir: None,
         }
     }
 }
@@ -156,9 +160,18 @@ pub struct PreviewFrame {
     pub seq: u64,
 }
 
+/// Milestone 8: live recording state, carried by the 2 s stats write so the
+/// GUI status line can show the output file and frame/drop counts.
+#[derive(Clone, Debug, Default)]
+pub struct RecordInfo {
+    pub path: String,
+    pub frames: u64,
+    pub drops: u64,
+}
+
 /// Pipeline statistics, refreshed every 2 s; the GUI shows them in a status
 /// line and the pipeline logs them.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Stats {
     pub frames: u64,
     pub drops: u64,
@@ -173,6 +186,8 @@ pub struct Stats {
     /// (width, height, fps) — shown in the GUI status line. Set once per
     /// stream (after `negotiate`), carried by the 2 s stats write.
     pub negotiated: Option<(u32, u32, f64)>,
+    /// Milestone 8: Some while a recording is active.
+    pub record: Option<RecordInfo>,
 }
 
 /// The single source of truth shared by all threads. `running` is backed by
@@ -195,6 +210,13 @@ pub struct Shared {
     /// watches edges of this on its tick and closes/reopens the window.
     /// Initialized from `!settings.start_minimized`.
     pub show_window: AtomicBool,
+    /// Milestone 8: desired recording state (GUI Record button, tray item,
+    /// `--record`). The pipeline watches edges of this in `capture_loop` and
+    /// starts/stops the Recorder. Runtime-only — not persisted to the config.
+    pub recording: AtomicBool,
+    /// Milestone 8: explicit output path from `--record <path>` (a directory
+    /// gets a timestamped file inside it). Beats `settings.record_dir`.
+    pub record_path: Mutex<Option<PathBuf>>,
 }
 
 impl Shared {
@@ -209,6 +231,8 @@ impl Shared {
             preview_on: AtomicBool::new(false),
             stats: Mutex::new(Stats::default()),
             show_window: AtomicBool::new(show_window),
+            recording: AtomicBool::new(false),
+            record_path: Mutex::new(None),
         }
     }
 

@@ -80,6 +80,15 @@ pub(crate) fn toggle_mirror(shared: &Shared, config_path: &Path) {
     info!(mirror = on, "toggled feed mirroring");
 }
 
+/// Flip the recording flag (milestone 8). Runtime-only — not persisted to the
+/// config; the pipeline watches the edge in its capture loop. Called by the
+/// tray menu item (and unit-tested directly).
+pub(crate) fn toggle_recording(shared: &Shared) {
+    let on = !shared.recording.load(Ordering::Relaxed);
+    shared.recording.store(on, Ordering::Relaxed);
+    info!(recording = on, "toggled recording");
+}
+
 /// Spawn the tray thread. The returned handle finishes when `shared` stops.
 pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -116,6 +125,14 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             toggle_mirror(&mirror_shared, &mirror_config);
         }) {
             warn!(error = %e, "tray: could not add mirror toggle item");
+        }
+
+        // Milestone 8: record the filtered feed + default mic to .ogv.
+        let rec_shared = shared.clone();
+        if let Err(e) = tray.add_menu_item("Toggle recording", move || {
+            toggle_recording(&rec_shared);
+        }) {
+            warn!(error = %e, "tray: could not add recording toggle item");
         }
 
         // Milestone 6: show/hide the GUI window. The GUI watches edges of
@@ -182,6 +199,16 @@ mod tests {
         let v = !shared.show_window.load(Ordering::Relaxed);
         shared.show_window.store(v, Ordering::Relaxed);
         assert!(!shared.show_window.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn toggle_recording_flips_the_atomic_without_persisting() {
+        let shared = Shared::new(Settings::default(), DeviceParams::default());
+        assert!(!shared.recording.load(Ordering::Relaxed));
+        toggle_recording(&shared);
+        assert!(shared.recording.load(Ordering::Relaxed));
+        toggle_recording(&shared);
+        assert!(!shared.recording.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -19,8 +19,9 @@ use v4l2r::ioctl::Capabilities;
 use v4l2r::{bindings, PixelFormat, QueueType};
 
 use crate::gaze::GazeCorrector;
+use crate::recorder::{self, Recorder};
 use crate::segmentation::{Segmenter, MODEL_H, MODEL_W};
-use crate::settings::{DeviceParams, Mode, Shared, Stats};
+use crate::settings::{DeviceParams, Mode, RecordInfo, Shared, Stats};
 use crate::v4l2::{Device, Queue};
 use crate::pwsource::PwSource;
 use crate::{composite, frame};
@@ -344,6 +345,8 @@ fn run_stream(shared: &Shared) -> Result<()> {
         pw_node.as_ref(),
         in_fmt.width,
         in_fmt.height,
+        num,
+        den,
         negotiated,
     );
 
@@ -355,10 +358,23 @@ fn run_stream(shared: &Shared) -> Result<()> {
     result
 }
 
+/// Milestone 8: build the output path for a new recording — `--record <path>`
+/// (Shared::record_path) beats the configured `record_dir`, which beats the
+/// default videos dir — and start the Recorder at the negotiated geometry.
+fn start_recorder(shared: &Shared, w: u32, h: u32, num: u32, den: u32) -> Result<Recorder> {
+    let explicit = shared.record_path.lock().unwrap().clone();
+    let dir = shared.snapshot_settings().record_dir;
+    let path = recorder::resolve_output_path(dir.as_deref(), explicit.as_deref())?;
+    Recorder::start(w, h, num, den, path)
+}
+
 /// Decode + filter one raw input frame according to the current shared
 /// settings. Returns the exact bytes to write to the loopback (a verbatim
 /// copy for passthrough, JPEG otherwise), the stage timings, and an optional
 /// RGBA preview frame. `Ok(None)` = drop the frame (undecodable input).
+/// Milestone 8: when `rec` is set, the post-filter BGR frame is also handed
+/// to the recorder (the recording shows exactly what the virtual camera
+/// emits — in passthrough mode the raw MJPG is decoded for it).
 #[allow(clippy::too_many_arguments)]
 fn filter_frame(
     shared: &Shared,
@@ -368,6 +384,7 @@ fn filter_frame(
     bg: &mut Option<Mat>,
     bg_loaded_gen: &mut u64,
     gaze: &mut Option<GazeCorrector>,
+    rec: Option<&Recorder>,
     src: &[u8],
     w: u32,
     h: u32,
@@ -376,8 +393,10 @@ fn filter_frame(
     let s = shared.snapshot_settings();
 
     // Passthrough (filter disabled or mode=passthrough): byte-copy. Decode
-    // only for the preview when a GUI is attached. With mirror on the
-    // byte-copy cannot flip, so decode -> flip -> re-encode instead.
+    // for the preview when a GUI is attached, and for the recorder when one
+    // is active (the recording must match the virtual camera's output).
+    // With mirror on the byte-copy cannot flip, so decode -> flip ->
+    // re-encode instead.
     if !s.enabled || s.mode == Mode::Passthrough {
         if s.mirror {
             let img = match frame::decode_mjpg(src) {
@@ -388,6 +407,10 @@ fn filter_frame(
                 }
             };
             let flipped = frame::flip_horizontal(&img)?;
+            // The recorder sees the same (mirrored) frame the loopback gets.
+            if let Some(r) = rec {
+                r.write_frame(flipped.data_bytes()?);
+            }
             let preview = if produce_rgba {
                 mat_to_rgba(&flipped).ok()
             } else {
@@ -396,11 +419,15 @@ fn filter_frame(
             let jpeg = frame::encode_jpeg(&flipped, JPEG_QUALITY)?;
             return Ok(Some((jpeg, Stats::default(), preview)));
         }
-        let preview = if produce_rgba {
-            frame::decode_mjpg(src).ok().and_then(|img| mat_to_rgba(&img).ok())
+        let decoded = if produce_rgba || rec.is_some() {
+            frame::decode_mjpg(src).ok()
         } else {
             None
         };
+        if let (Some(r), Some(img)) = (rec, &decoded) {
+            r.write_frame(img.data_bytes()?);
+        }
+        let preview = decoded.and_then(|img| mat_to_rgba(&img).ok());
         return Ok(Some((src.to_vec(), Stats::default(), preview)));
     }
 
@@ -515,6 +542,13 @@ fn filter_frame(
         out_img = frame::flip_horizontal(&out_img)?;
     }
 
+    // Milestone 8: tap the post-filter frame into the recorder before the
+    // JPEG encode (the recorder wants raw BGR, not MJPG). The tap is after
+    // the mirror flip, so the recording matches the virtual camera exactly.
+    if let Some(r) = rec {
+        r.write_frame(out_img.data_bytes()?);
+    }
+
     let preview = if produce_rgba {
         Some(mat_to_rgba(&out_img)?)
     } else {
@@ -544,6 +578,8 @@ fn capture_loop(
     pw: Option<&PwSource>,
     w: u32,
     h: u32,
+    num: u32,
+    den: u32,
     negotiated: Option<(u32, u32, f64)>,
 ) -> Result<()> {
     let dev_generation = shared.device_generation.load(Ordering::Relaxed);
@@ -554,6 +590,9 @@ fn capture_loop(
     let mut bg: Option<Mat> = None;
     let mut bg_loaded_gen: u64 = u64::MAX;
     let mut gaze: Option<GazeCorrector> = None;
+    // Milestone 8: the recorder, started/stopped on edges of
+    // `shared.recording` (GUI Record button / tray / `--record`).
+    let mut recorder: Option<Recorder> = None;
 
     let mut out_inflight = vec![false; out_q.buffers.len()];
     let mut frames = 0u64;
@@ -569,6 +608,28 @@ fn capture_loop(
         if shared.device_generation.load(Ordering::Relaxed) != dev_generation {
             info!("device settings changed; restarting stream");
             return Ok(());
+        }
+
+        // Milestone 8: recording toggle. On start failure, clear the flag so
+        // the GUI/tray show "not recording" and log a clear reason; the
+        // filtering pipeline is never affected.
+        let want_rec = shared.recording.load(Ordering::Relaxed);
+        if want_rec != recorder.is_some() {
+            if want_rec {
+                match start_recorder(shared, w, h, num, den) {
+                    Ok(r) => {
+                        info!(path = %r.path().display(), "recording started");
+                        recorder = Some(r);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "could not start recording");
+                        shared.recording.store(false, Ordering::Relaxed);
+                    }
+                }
+            } else if let Some(r) = recorder.take() {
+                info!("recording stopped by toggle");
+                r.stop(); // sends SIGINT so ffmpeg finalizes the .ogv
+            }
         }
 
         // Wait for a frame on the input; the timeout also lets us notice
@@ -605,6 +666,7 @@ fn capture_loop(
                         &mut bg,
                         &mut bg_loaded_gen,
                         &mut gaze,
+                        recorder.as_ref(),
                         src,
                         w,
                         h,
@@ -647,14 +709,22 @@ fn capture_loop(
         let elapsed = last.elapsed();
         if elapsed >= Duration::from_secs(2) {
             let fps = frames as f64 / elapsed.as_secs_f64();
+            // Milestone 8: carry the live recording state into the stats the
+            // GUI status line shows.
+            let record = recorder.as_ref().map(|r| RecordInfo {
+                path: r.path().display().to_string(),
+                frames: r.frames(),
+                drops: r.drops(),
+            });
             let st = Stats {
                 frames,
                 drops,
                 fps,
                 negotiated,
-                ..stage
+                record,
+                ..stage.clone()
             };
-            *shared.stats.lock().unwrap() = st;
+            *shared.stats.lock().unwrap() = st.clone();
             info!(
                 frames,
                 drops,

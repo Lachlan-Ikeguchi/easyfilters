@@ -29,6 +29,8 @@ pub struct Config {
     pub start_minimized: Option<bool>,
     /// Milestone 7: publish a native PipeWire camera node (default: on).
     pub pipewire: Option<bool>,
+    /// Milestone 8: directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos).
+    pub record_dir: Option<PathBuf>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub width: Option<u32>,
@@ -97,6 +99,7 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         close_to_tray: Some(s.close_to_tray),
         start_minimized: Some(s.start_minimized),
         pipewire: Some(s.pipewire),
+        record_dir: s.record_dir.clone(),
         input: d.input.clone(),
         output: d.output.clone(),
         width: Some(d.width),
@@ -161,6 +164,7 @@ mod tests {
             close_to_tray: Some(false),
             start_minimized: Some(true),
             pipewire: Some(true),
+            record_dir: Some(PathBuf::from("/mnt/recordings")),
             input: Some(PathBuf::from("/dev/video1")),
             output: Some(PathBuf::from("/dev/video0")),
             width: Some(1920),

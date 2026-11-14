@@ -12,6 +12,7 @@ mod gui;
 mod lock;
 mod pipeline;
 mod pwsource;
+mod recorder;
 mod segmentation;
 mod settings;
 mod tray;
@@ -137,6 +138,13 @@ struct Args {
     /// Milestone 6: remove the XDG autostart entry and exit
     #[arg(long)]
     uninstall_autostart: bool,
+    /// Milestone 8: start recording at launch to this path (a directory gets
+    /// a timestamped .ogv inside it; a file path is used verbatim)
+    #[arg(long)]
+    record: Option<PathBuf>,
+    /// Milestone 8: directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos)
+    #[arg(long)]
+    record_dir: Option<PathBuf>,
 }
 
 struct Resolved {
@@ -189,6 +197,7 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             close_to_tray: cfg.close_to_tray.unwrap_or(true),
             start_minimized: start_minimized.unwrap_or(false),
             pipewire: !args.no_pipewire && cfg.pipewire.unwrap_or(true),
+            record_dir: args.record_dir.clone().or_else(|| cfg.record_dir.clone()),
         },
         device: DeviceParams {
             input: args.input.clone().or_else(|| cfg.input.clone()),
@@ -369,6 +378,13 @@ fn run(args: Args) -> Result<()> {
     };
 
     let shared = Arc::new(Shared::new(resolved.settings, resolved.device));
+    // Milestone 8: `--record <path>` starts recording immediately (headless
+    // friendly); the pipeline picks the flag up in its capture loop.
+    if let Some(p) = &args.record {
+        *shared.record_path.lock().unwrap() = Some(p.clone());
+        shared.recording.store(true, Ordering::SeqCst);
+        info!(path = %p.display(), "recording requested via --record");
+    }
     let want_gui = !args.no_gui && display_available();
     if !want_gui && !args.no_gui {
         info!("no DISPLAY/WAYLAND_DISPLAY set; running headless (--no-gui)");
@@ -568,5 +584,22 @@ mod tests {
             resolve(&args, &Config::default()).settings.background,
             Some(PathBuf::from("/tmp/bg.jpg"))
         );
+    }
+
+    #[test]
+    fn resolve_record_dir_cli_beats_config_beats_default() {
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        let r = resolve(&args, &Config::default());
+        assert_eq!(r.settings.record_dir, None); // default: XDG videos dir at record time
+        let cfg = Config {
+            record_dir: Some(PathBuf::from("/mnt/recordings")),
+            ..Default::default()
+        };
+        let r = resolve(&args, &cfg);
+        assert_eq!(r.settings.record_dir, Some(PathBuf::from("/mnt/recordings")));
+        let args =
+            Args::try_parse_from(["easyfilters", "--record-dir", "/tmp/rec"]).unwrap();
+        let r = resolve(&args, &cfg);
+        assert_eq!(r.settings.record_dir, Some(PathBuf::from("/tmp/rec")));
     }
 }

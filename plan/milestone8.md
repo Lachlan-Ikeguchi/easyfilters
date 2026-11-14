@@ -202,6 +202,56 @@ driven by `Shared`; headless 1280x720@30 at ~29.8 fps, 0 drops in release).
   heavier dep tree, exact PTS sync; not needed for MVP.
 - Recording quality/resolution controls in the GUI.
 
-## Implementation findings
+## Implementation findings (2026-11-15, verified live on this machine, release build)
 
-(to be filled during implementation, verified live)
+- **Step-2 sync experiment decided the writer design.** `-use_wallclock_as_timestamps 1`
+  on `-f rawvideo -i pipe:0` is accepted but *ignored* (ffmpeg 8.1.3): 10 frames
+  at 100 ms + a 1.0 s gap + 10 frames produced count-based PTS 0.0–1.9 s with the
+  flag both on and off. So the recorder uses the fallback from the plan: a writer
+  thread writes exactly one frame per negotiated interval (CFR), repeating the
+  latest frame when the pipeline dropped one. Verified: 20 produced frames over
+  2.96 s wall with padding → format duration 2.90 s, last video PTS 2.80 s.
+- **Pulse audio timestamps are absolute (monotonic-since-boot), not relative.**
+  Without rebasing, a 5 s A/V test gave video duration 0.9 s, audio start_time
+  6.07 s and `Queue input is backward in time` warnings. Fixed with
+  `-af aresample=48000:async=1:first_pts=0`: 5.14 s wall → video 4.90 s, audio
+  4.95 s, both start_time 0.000, `ffmpeg -v error -f null -` decode clean. The
+  arg is asserted in the `ffmpeg_args` unit test.
+- **libtheora is single-threaded and cannot hold 720p30 on a busy box** (load
+  avg ~30 on the 12-core i5-1235U): 720p q6 ≈ 181 ms/frame, q5 ≈ 136 ms,
+  854x480 q6 ≈ 59 ms, 640x360 q6 ≈ 60 ms. Hence `RECORD_MAX_HEIGHT = 540`:
+  frames taller than 540p are downscaled in the writer thread (off the capture
+  hot path) before being written. On an idle box 720p still records at 960x540
+  q5 — making the cap/quality configurable is a follow-up.
+- **Stop semantics:** `Recorder::drop` sends SIGINT (ffmpeg finalizes the ogg,
+  exit 255), waits 10 s, then SIGKILL; the writer thread exits on EPIPE. One test
+  run didn't exit within 15 s while blocked in the pulse read, so the SIGKILL
+  fallback is real — the .ogv stays playable either way (Ogg is streamable).
+  stderr goes to `<file>.ogv.ffmpeg.log`.
+- **nixpkgs gating confirmed** against `nixpkgs-unstable` ffmpeg/generic.nix:
+  `withTheora`/`withVorbis` default to `withHeadlessDeps` (false for plain
+  `pkgs.ffmpeg`), `withPulse` to `withSmallDeps && isLinux`. The devShell's old
+  `pkgs.ffmpeg` therefore lacks all three → `pkgs.ffmpeg-full` is now in the
+  devShell and in the wrapper `PATH`, and `checks.default` asserts the
+  libtheora/libvorbis encoders and the pulse device in the wrapped ffmpeg-full.
+- **Bring-up fixes:** `Stats` lost `Copy` when `record: Option<RecordInfo>` was
+  added (3 compile errors → clones at the two move sites); the smoke test
+  exposed that `Recorder::start_inner` must create the output's parent dir
+  (an explicit `--record /a/b/c.ogv` can point into a missing dir).
+- **`cargo test --release`: 91 passed, 0 failed** (6 new recorder tests:
+  ffmpeg argv incl. the aresample fix, rec_dims, timestamp slug, output-path
+  resolution/collision, and a live `record_smoke` that spawns real ffmpeg,
+  records ~1 s of synthetic frames through the paced writer and verifies an
+  `OggS` file — run with `EASYFILTERS_FFMPEG=/usr/bin/ffmpeg` since the nix
+  devShell's ffmpeg lacks libtheora).
+- **`nix build` + checks green on the final tree** — package builds
+  (`BUILD_RC=0`), and `checks.default` (easyfilters-smoke) passes, including the
+  new assertions that the wrapper puts ffmpeg-full on PATH and that ffmpeg-full
+  ships the libtheora/libvorbis encoders and the pulse device. First checks run
+  failed with exit 141 (SIGPIPE): stdenv runs with `pipefail`, so
+  `ffmpeg -encoders | grep -q libtheora` dies when grep -q exits at the first
+  match — the check now captures ffmpeg's output into a variable and greps the
+  herestring instead. `--help` shows `--record <PATH>` / `--record-dir <PATH>`.
+- **Not yet verified live:** the GUI Record button and tray toggle end-to-end
+  with a real camera (no display/camera in this session), and pipeline fps
+  while recording at 720p30 (Verify steps 3–5) — do on the desktop session.

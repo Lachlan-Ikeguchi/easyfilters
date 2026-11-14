@@ -83,6 +83,7 @@
                 --set-default EASYFILTERS_MODEL "$out/share/easyfilters/selfie_segmentation_landscape.onnx" \
                 --set-default EASYFILTERS_FACE_MODEL "$out/share/easyfilters/face_landmarks_478.onnx" \
                 --set-default EASYFILTERS_FACE_DETECTOR "$out/share/easyfilters/blaze_face_short_range.onnx" \
+                --prefix PATH : "${pkgs.ffmpeg-full}/bin" \
                 --prefix LD_LIBRARY_PATH : "${
                   pkgs.lib.makeLibraryPath [
                     pkgs.stdenv.cc.cc.lib
@@ -137,6 +138,17 @@
           test -f "$pkg/share/applications/easyfilters.desktop"
           test -f "$pkg/share/icons/hicolor/scalable/apps/easyfilters.svg"
           grep -q "Icon=easyfilters" "$pkg/share/applications/easyfilters.desktop"
+          # Milestone 8: the record feature needs ffmpeg with the
+          # libtheora/libvorbis encoders and the pulse input device — the
+          # wrapper puts ffmpeg-full on PATH. (Capture ffmpeg's output into a
+          # variable first: stdenv runs with pipefail, and `ffmpeg | grep -q`
+          # would fail with SIGPIPE/141 once grep -q exits at the first match.)
+          grep -q ffmpeg-full <<< "$(cat $pkg/bin/easyfilters)"
+          ffenc=$(${pkgs.ffmpeg-full}/bin/ffmpeg -hide_banner -encoders 2>/dev/null)
+          ffdev=$(${pkgs.ffmpeg-full}/bin/ffmpeg -hide_banner -devices 2>/dev/null)
+          grep -q libtheora <<< "$ffenc"
+          grep -q libvorbis <<< "$ffenc"
+          grep -q pulse <<< "$ffdev"
         '';
       });
 
@@ -150,9 +162,13 @@
             opencv4
             llvmPackages.libclang.lib
             linuxHeaders
-            # runtime/debug tooling used by the repo scripts and plans
+            # runtime/debug tooling used by the repo scripts and plans.
+            # Milestone 8: ffmpeg-full (not ffmpeg) — the record feature shells
+            # out to ffmpeg and needs the libtheora/libvorbis encoders and the
+            # pulse input device, which plain pkgs.ffmpeg does not build with
+            # (withTheora/withVorbis default to withHeadlessDeps = false).
             v4l-utils
-            ffmpeg
+            ffmpeg-full
             (python3.withPackages (ps: [ ps.opencv4 ]))
             # winit (iced GUI) dlopens these at runtime; dbus dev files let
             # libdbus-sys (tray-item/ksni) build via pkg-config

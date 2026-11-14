@@ -79,6 +79,8 @@ struct App {
     mirror: bool,
     // Milestone 6: close the window to the tray instead of quitting.
     close_to_tray: bool,
+    // Milestone 8: recording toggle (runtime-only, not persisted).
+    recording: bool,
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
     window_visible: bool,
@@ -105,6 +107,9 @@ enum Message {
     GazeStrengthChanged(f32),
     MirrorToggled(bool),
     CloseToTrayToggled(bool),
+    /// Milestone 8: Record button — flip the shared recording flag; the
+    /// pipeline starts/stops the ffmpeg recorder on the edge.
+    ToggleRecord,
     /// The window was asked to close (WM close button). Milestone 6:
     /// hide to tray when `close_to_tray`, else quit.
     CloseRequested(window::Id),
@@ -126,6 +131,7 @@ impl App {
     fn new(shared: Arc<Shared>, config_path: PathBuf) -> Self {
         let s = shared.snapshot_settings();
         let d = shared.device.read().unwrap().clone();
+        let recording = shared.recording.load(Ordering::Relaxed);
         Self {
             shared,
             config_path,
@@ -137,6 +143,7 @@ impl App {
             gaze_strength: s.gaze_strength,
             mirror: s.mirror,
             close_to_tray: s.close_to_tray,
+            recording,
             window_id: None,
             window_visible: !s.start_minimized,
             background_text: s
@@ -242,7 +249,12 @@ impl App {
                 if s.close_to_tray != self.close_to_tray {
                     self.close_to_tray = s.close_to_tray;
                 }
-                self.stats = *self.shared.stats.lock().unwrap();
+                // Milestone 8: re-sync the record toggle (tray / --record).
+                let rec = self.shared.recording.load(Ordering::Relaxed);
+                if rec != self.recording {
+                    self.recording = rec;
+                }
+                self.stats = self.shared.stats.lock().unwrap().clone();
                 // Milestone 6: tray "Show/Hide window" flips `show_window`;
                 // apply it as a hide/show on the edge.
                 let want_visible = self.shared.show_window.load(Ordering::Relaxed);
@@ -291,6 +303,15 @@ impl App {
             Message::CloseToTrayToggled(v) => {
                 self.close_to_tray = v;
                 self.apply_and_save();
+                Task::none()
+            }
+            Message::ToggleRecord => {
+                // Runtime-only state: flip the atomic, no config save. The
+                // pipeline watches the edge and starts/stops the recorder.
+                self.recording = !self.recording;
+                self.shared
+                    .recording
+                    .store(self.recording, Ordering::Relaxed);
                 Task::none()
             }
             Message::Toggled(v) => {
@@ -436,15 +457,23 @@ impl App {
                 .into(),
         };
 
-        let st = self.stats;
+        let st = self.stats.clone();
         // Milestone 6: show the actually-negotiated stream format (the camera
         // may not support the requested WxH/fps).
         let negotiated = match st.negotiated {
             Some((w, h, fps)) => format!("  |  negotiated {w}x{h}@{fps:.0}"),
             None => String::new(),
         };
+        // Milestone 8: show the active recording (file + frame/drop counts).
+        let record = match &st.record {
+            Some(r) => format!(
+                "  |  recording {} ({} frames, {} dropped)",
+                r.path, r.frames, r.drops
+            ),
+            None => String::new(),
+        };
         let status = text(format!(
-            "{}  |  {:.1} fps, {} frames, {} drops{negotiated}  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
+            "{}  |  {:.1} fps, {} frames, {} drops{negotiated}{record}  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
             self.status, st.fps, st.frames, st.drops, st.decode_ms, st.infer_ms, st.composite_ms, st.gaze_ms, st.encode_ms
         ))
         .size(12);
@@ -475,6 +504,13 @@ impl App {
             toggler(self.close_to_tray)
                 .label("Close window to tray (keep filtering)")
                 .on_toggle(Message::CloseToTrayToggled),
+            // Milestone 8: record the filtered feed + default mic to .ogv.
+            button(if self.recording {
+                "Stop recording"
+            } else {
+                "Record"
+            })
+            .on_press(Message::ToggleRecord),
             toggler(self.gaze_correction)
                 .label("Gaze correction (capped pupil shift)")
                 .on_toggle(Message::GazeToggled),
