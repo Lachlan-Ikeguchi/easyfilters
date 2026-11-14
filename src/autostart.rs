@@ -1,4 +1,4 @@
-//! XDG autostart entry (milestone 6, "launch at login"): `--install-autostart`
+//! XDG autostart entry ("launch at login"): `--install-autostart`
 //! writes `~/.config/autostart/easyfilters.desktop` so the desktop session
 //! starts easyfilters at login with the window hidden (`--start-minimized`);
 //! `--uninstall-autostart` removes it. The NixOS module has an equivalent

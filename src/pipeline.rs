@@ -1,6 +1,6 @@
-//! The capture -> segment -> composite -> loopback pipeline (milestones 1-3),
-//! refactored in milestone 4 to run on its own thread, driven live by the
-//! `Shared` settings the GUI/tray write. The per-frame hot path only takes an
+//! The capture -> segment -> composite -> loopback pipeline, run on its own
+//! thread, driven live by the `Shared` settings the GUI/tray write. The
+//! per-frame hot path only takes an
 //! uncontended `RwLock` read plus a few atomic loads; anything expensive
 //! (model load, background image load) happens once, lazily, or on a
 //! generation bump.
@@ -235,8 +235,8 @@ pub fn run(shared: Arc<Shared>) -> Result<()> {
                 if !shared.running() {
                     return Err(e);
                 }
-                // Milestone 6: a busy camera (held by another app) deserves a
-                // targeted hint, not just the generic retry message.
+                // A busy camera (held by another app) deserves a targeted
+                // hint, not just the generic retry message.
                 let chain = format!("{e:?}");
                 if chain.contains("EBUSY") || chain.contains("Device or resource busy") {
                     warn!(
@@ -296,9 +296,9 @@ fn run_stream(shared: &Shared) -> Result<()> {
     // formats the loopback needs an explicit sizeimage to size its buffers.
     let sizeimage = w * h * 2;
     let out_fmt = out_dev.set_format(QueueType::VideoOutput, w, h, pf, sizeimage)?;
-    // Milestone 6: log requested vs negotiated explicitly — the camera may
-    // not support the requested WxH/fps and negotiate() silently picks the
-    // nearest. The GUI status line shows this via `Stats::negotiated`.
+    // Log requested vs negotiated explicitly — the camera may not support
+    // the requested WxH/fps and negotiate() silently picks the nearest. The
+    // GUI status line shows this via `Stats::negotiated`.
     let negotiated = Some((in_fmt.width, in_fmt.height, den as f64 / num as f64));
     info!(
         input = %input_path.display(),
@@ -322,9 +322,9 @@ fn run_stream(shared: &Shared) -> Result<()> {
         in_q.qbuf(i, 0, now_timeval())?;
     }
 
-    // Milestone 7: native PipeWire camera node publishing the same filtered
-    // feed (RGBA), so PipeWire-based apps can consume it without touching
-    // the v4l2loopback device. Failure must not kill the loopback path.
+    // Native PipeWire camera node publishing the same filtered feed (RGBA),
+    // so PipeWire-based apps can consume it without touching the v4l2loopback
+    // device. Failure must not kill the loopback path.
     let pw_node = if shared.snapshot_settings().pipewire {
         match PwSource::new(w, h, num, den) {
             Ok(node) => Some(node),
@@ -512,7 +512,7 @@ fn filter_frame(
     };
     let composite_t = t.elapsed();
 
-    // Gaze correction (milestone 5): after composite, before encode/preview.
+    // Gaze correction: after composite, before encode/preview.
     // Applies to overlay/blur/replace (mask mode has no face to correct).
     let t = Instant::now();
     let gaze_ms = if s.gaze_correction {
@@ -673,8 +673,8 @@ fn capture_loop(
                         produce_rgba,
                     )? {
                         Some((bytes, timing, preview)) => {
-                            // Milestone 7: hand the RGBA frame to the
-                            // PipeWire node before the preview consumes it.
+                            // Hand the RGBA frame to the PipeWire node before
+                            // the preview consumes it.
                             if let Some(node) = pw {
                                 if let Some((pv_w, pv_h, rgba)) = preview.as_ref() {
                                     node.push(*pv_w, *pv_h, rgba);

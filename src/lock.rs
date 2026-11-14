@@ -1,4 +1,4 @@
-//! Single-instance lock (milestone 6): a non-blocking `flock` on
+//! Single-instance lock: a non-blocking `flock` on
 //! `$XDG_RUNTIME_DIR/easyfilters.lock`. With autostart, a second manual
 //! launch would otherwise fail on the camera with a cryptic EBUSY — instead
 //! it prints "already running (pid N)" and exits cleanly.

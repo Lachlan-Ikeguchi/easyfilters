@@ -1,12 +1,11 @@
-//! System tray icon (milestone 4): `tray-item` with the ksni backend — a
-//! pure-Rust StatusNotifierItem over D-Bus, so no gtk3/libappindicator system
-//! libraries are needed and it works on any SNI host (KDE Plasma, COSMIC, …).
+//! System tray icon: `tray-item` with the ksni backend — a pure-Rust
+//! StatusNotifierItem over D-Bus, so no gtk3/libappindicator system libraries
+//! are needed and it works on any SNI host (KDE Plasma, COSMIC, …).
 //! Menu: toggle filtering on/off (persisted to the config), toggle gaze
-//! correction, toggle feed mirroring, show/hide the GUI window
-//! (milestone 6 — this is what makes
-//! "run in the background" usable: close the window and the tray keeps the
-//! app alive), quit. Failure to register (no StatusNotifierWatcher on the
-//! session bus) is a warning, never fatal.
+//! correction, toggle feed mirroring, show/hide the GUI window (this is what makes "run in the
+//! background" usable: close the window and the tray keeps the app alive),
+//! quit. Failure to register (no StatusNotifierWatcher on the session bus)
+//! is a warning, never fatal.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -54,7 +53,7 @@ pub(crate) fn toggle_filtering(shared: &Shared, config_path: &Path) {
     info!(enabled, "toggled filtering");
 }
 
-/// Flip the gaze-correction flag and persist the config (milestone 5).
+/// Flip the gaze-correction flag and persist the config.
 pub(crate) fn toggle_gaze(shared: &Shared, config_path: &Path) {
     let on = {
         let mut s = shared.settings.write().unwrap();

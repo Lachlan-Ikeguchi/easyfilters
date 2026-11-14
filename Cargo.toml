@@ -9,8 +9,8 @@ clap = { version = "4.6.1", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 v4l2r = "0.0.7"
-# Milestone 2 (segmentation): pure-Rust ONNX runtime + OpenCV for frame
-# decode/resize/encode. On this nix box the opencv build needs:
+# Segmentation: pure-Rust ONNX runtime + OpenCV for frame decode/resize/encode.
+# On this nix box the opencv build needs:
 #   OPENCV_INCLUDE_PATHS=/usr/include   (headers live in /usr/include/opencv2,
 #                                        not the opencv4/ layout)
 #   LIBCLANG_PATH=<nix clang-lib>/lib   (bindgen/libclang; e.g.
@@ -22,18 +22,17 @@ v4l2r = "0.0.7"
 # needed: flake.nix sets them from nixpkgs' libclang/opencv4/linuxHeaders.
 tract-onnx = "0.23"
 opencv = { version = "0.102", features = ["clang-runtime"] }
-# Milestone 4 (GUI + tray + config).
+# GUI + tray + config.
 # iced with the tiny-skia software renderer only (no wgpu: no shaderc/cmake/GPU
 # and no extra system libs) plus the image widget for the live preview. The
 # wayland/x11 features pull in winit's compositors backends; libxkbcommon and
 # libwayland are provided by the nix flake (dlopen'd/linked by winit).
 # tray-item with the ksni feature: pure-Rust StatusNotifierItem over D-Bus,
 # no gtk3/libappindicator system libraries needed.
-# pipewire gets used from milestone 7: the filtered feed is also published as
-# a native PipeWire Camera source node (libpipewire-0.3 via pkg-config) so
-# pw-based consumers (Snapshot, cosmic camera, browsers via the portal) can
-# read it directly. tokio stays unused: capture is the v4l2r MMAP path in a
-# std::thread.
+# The filtered feed is also published as a native PipeWire Camera source node
+# (libpipewire-0.3 via pkg-config) so pw-based consumers (Snapshot, cosmic
+# camera, browsers via the portal) can read it directly. Capture is the v4l2r
+# MMAP path in a std::thread — no async runtime needed.
 pipewire = { version = "0.8", features = ["v0_3_34"] }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"

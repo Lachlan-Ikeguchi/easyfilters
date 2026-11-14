@@ -1,4 +1,4 @@
-//! TOML configuration (milestone 4): `$XDG_CONFIG_HOME/easyfilters/config.toml`
+//! TOML configuration: `$XDG_CONFIG_HOME/easyfilters/config.toml`
 //! by default, `--config <path>` to override. Every field is optional; the
 //! effective value is CLI arg > config file > built-in default (see
 //! `resolve` in main.rs). The GUI and tray persist changes immediately via
@@ -21,13 +21,12 @@ pub struct Config {
     pub background: Option<PathBuf>,
     pub gaze_correction: Option<bool>,
     pub gaze_strength: Option<f32>,
-    /// Mirror the whole output feed horizontally (default: off).
     pub mirror: Option<bool>,
-    /// Milestone 6: close the GUI window to the tray instead of quitting.
+    /// Close the GUI window to the tray instead of quitting.
     pub close_to_tray: Option<bool>,
-    /// Milestone 6: start with the window hidden (tray only).
+    /// Start with the window hidden (tray only).
     pub start_minimized: Option<bool>,
-    /// Milestone 7: publish a native PipeWire camera node (default: on).
+    /// Publish a native PipeWire camera node (default: on).
     pub pipewire: Option<bool>,
     /// Milestone 8: directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos).
     pub record_dir: Option<PathBuf>,

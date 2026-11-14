@@ -26,8 +26,8 @@ same way. The two apps are designed to sit side by side in the system tray.
 
 ## Out of scope (for now)
 
-- Full gaze redirection beyond the capped landmark-based pupil shift of
-  milestone 5 (RTX/Maxine-class — see "Risks").
+- Full gaze redirection beyond the capped landmark-based pupil shift
+  (RTX/Maxine-class — see "Risks").
 - Beauty filters, avatars, overlays, segmentation of anything but the person.
 - Audio processing (that's EasyEffects' job — the two apps complement each
   other), multi-camera support, streaming-key style scenes.
@@ -69,10 +69,12 @@ encode (YUYV/RGB) ──► write to v4l2loopback device ──► apps read /de
    (strength configurable) or replace it with a user-chosen image, with
    feathered mask edges.
 4. **Output** — write composited frames to a `v4l2loopback` device configured
-   with `exclusive_caps=1` and a friendly `card_label`. PipeWire exposes V4L2
-   devices as video sources, so PipeWire-aware apps (Firefox) and V4L2-based
-   apps (Discord, Chrome) all see it. Note: the `v4l2r` crate is read-oriented;
-   writing to the loopback device will need the `v4l` crate or raw ioctls.
+   with `exclusive_caps=0` and a friendly `card_label` (done: raw ioctls on
+   top of `v4l2r`, see `src/v4l2.rs`). PipeWire exposes V4L2 devices as video
+   sources, so PipeWire-aware apps (Firefox) and V4L2-based apps (Discord,
+   Chrome) all see it. The filtered feed is additionally published as a native
+   PipeWire `Video/Source` camera node (`src/pwsource.rs`) for PipeWire-only
+   consumers.
 5. **GUI** — iced app showing the preview straight from the compositing stage
    (not by re-reading the loopback device), plus the controls listed above.
 6. **Tray** — `tray-item` for a one-click enable/disable and "open settings".
@@ -91,21 +93,18 @@ encode (YUYV/RGB) ──► write to v4l2loopback device ──► apps read /de
 
 ## Dependency mapping (Cargo.toml)
 
-| Crate (current) | Role |
+| Crate | Role |
 |---|---|
-| `pipewire` | camera capture |
-| `opencv` | frame conversion, compositing, blur |
-| `iced` / `iced_aw` | GUI |
-| `tray-item` | system tray |
-| `tokio` | async runtime for the capture/output pipeline |
-| `serde` / `serde_json` / `toml` | config |
+| `v4l2r` (+ raw ioctls) | camera capture, loopback output, MMAP queues |
+| `pipewire` | native PipeWire camera source node |
+| `tract-onnx` | ONNX inference (segmentation, face models) |
+| `opencv` | frame decode/resize/encode, compositing, blur, image loading |
+| `iced` | GUI (tiny-skia software renderer) |
+| `tray-item` | system tray (ksni / D-Bus StatusNotifierItem) |
+| `serde` / `toml` | config |
 | `tracing` / `tracing-subscriber` | logging |
 | `clap` | CLI |
 | `anyhow` | error handling |
-
-**To add:** `tract-onnx` (or `ort`) for ONNX inference, `v4l` (or ioctls) for
-writing to the loopback device, and an image-loading crate for background
-images.
 
 ## Risks & open questions
 
@@ -116,27 +115,12 @@ images.
   enabling EasyFilters may require restarting the app once. Document this.
 - **Eye contact correction is capped, not full gaze redirection.** Production-
   quality gaze redirection (NVIDIA Maxine) needs an RTX GPU and is proprietary;
-  CPU-feasible alternatives are research-grade. Milestone 5 implements only a
-  subtle landmark-based pupil shift as an optional, capped, opt-in effect —
-  see `plan/milestone5.md`.
+  CPU-feasible alternatives are research-grade. The app implements only a
+  subtle landmark-based pupil shift as an optional, capped, opt-in effect
+  (`src/gaze.rs`).
 - **Model licensing**: MediaPipe models are Apache 2.0 — fine to bundle or
   download at first run.
 - **Pure-PipeWire alternative**: instead of v4l2loopback, a custom PipeWire
   source node is more native but less compatible with apps that still enumerate
-  V4L2 devices. Decision for MVP: v4l2loopback, revisit later.
-
-## Milestones
-
-1. **Plumbing**: capture the real camera and write it through to the loopback
-   device unfiltered — proves the virtual camera shows up and works in
-   Firefox/Discord. This is the riskiest part; do it first.
-2. **Segmentation**: integrate the ONNX model, show the person mask in the
-   preview.
-3. **Compositing**: blur + background replace with temporal smoothing.
-4. **GUI + tray + config**: full controls, persistent settings, tray toggle.
-5. **Gaze correction**: subtle, capped, landmark-based pupil shift (optional,
-   opt-in) so the user appears to look at the camera — see `plan/milestone5.md`.
-6. **Polish**: run in the background (close-to-tray, `--start-minimized`,
-   single-instance lock), startup behavior (launch at login), packaging
-   (`.desktop` + icon, NixOS autostart), any leftover
-   resolution/fps/camera-selection rough edges — see `plan/milestone6.md`.
+  V4L2 devices. The app publishes both: v4l2loopback for V4L2 apps, the native
+  node for PipeWire consumers.

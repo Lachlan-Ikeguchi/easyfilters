@@ -1,4 +1,4 @@
-//! Native PipeWire Camera source node (milestone 7).
+//! Native PipeWire Camera source node.
 //!
 //! The filtered feed is published directly as a PipeWire `Video/Source`
 //! node with `media.role = Camera`, next to the v4l2loopback device.
@@ -71,8 +71,7 @@ impl PwSource {
                 if let Err(e) = pw_thread(pw_slot, Arc::clone(&pw_running), w, h, num, den) {
                     warn!(error = %e, "pipewire source thread failed");
                 }
-                // The watchdog on the pw thread sees the flip via load()
-                // below; this store is also PwSource::alive()'s signal.
+                // The watchdog on the pw thread sees the flip via load().
                 pw_running.store(false, Ordering::Release);
             })
             .map_err(|e| anyhow!("spawn pw thread: {e}"))?;
@@ -83,12 +82,6 @@ impl PwSource {
             running,
             join: Some(join),
         })
-    }
-
-    /// Whether the node thread is still alive (goes false if the pw
-    /// connection died, e.g. after a pipewire daemon crash/restart).
-    pub fn alive(&self) -> bool {
-        self.running.load(Ordering::Acquire)
     }
 
     /// Publish one RGBA frame; the pw thread picks it up on the next tick.

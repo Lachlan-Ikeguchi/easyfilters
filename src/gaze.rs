@@ -1,4 +1,4 @@
-//! Gaze correction ("eye contact", milestone 5): an optional, capped,
+//! Gaze correction ("eye contact"): an optional, capped,
 //! landmark-based pupil shift. Two MediaPipe models (Apache-2.0, bundled in
 //! `assets/`, see assets/LICENSE-mediapipe-face-models.txt):
 //!

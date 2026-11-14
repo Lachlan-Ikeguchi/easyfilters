@@ -1,7 +1,7 @@
-//! Shared runtime state between the pipeline, GUI and tray threads
-//! (milestone 4). Everything here is designed to be cheap to read from the
-//! hot capture loop: the per-frame path only takes an uncontended `RwLock`
-//! read plus a few atomic loads.
+//! Shared runtime state between the pipeline, GUI and tray threads.
+//! Everything here is designed to be cheap to read from the hot capture loop:
+//! the per-frame path only takes an uncontended `RwLock` read plus a few
+//! atomic loads.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    /// Milestone 1 behavior: copy the input MJPG frame verbatim.
+    /// Copy the input MJPG frame verbatim (unfiltered).
     Passthrough,
     /// Frame with the segmented person kept, background dimmed/tinted.
     Overlay,
@@ -66,8 +66,8 @@ pub struct Settings {
     pub mask_smoothing: f32,
     /// Background image for replace mode (None = solid #003200).
     pub background: Option<PathBuf>,
-    /// Milestone 5: gaze correction (capped pupil shift). Opt-in, default
-    /// off — the one effect that can look uncanny.
+    /// Gaze correction (capped pupil shift). Opt-in, default off — the one
+    /// effect that can look uncanny.
     pub gaze_correction: bool,
     /// Gaze shift scale, 0..=1 (the absolute pixel cap applies on top).
     pub gaze_strength: f32,
@@ -76,14 +76,14 @@ pub struct Settings {
     /// the raw camera feed is not self-mirrored and some consumers want
     /// the true orientation.
     pub mirror: bool,
-    /// Milestone 6: closing the GUI window hides it to the tray instead of
-    /// quitting (filtering keeps running; tray "Quit" still stops the app).
+    /// Closing the GUI window hides it to the tray instead of quitting
+    /// (filtering keeps running; tray "Quit" still stops the app).
     pub close_to_tray: bool,
-    /// Milestone 6: start with the window hidden (tray only). `--background`
-    /// sets this for one run; the config can persist it.
+    /// Start with the window hidden (tray only). `--start-minimized` sets
+    /// this for one run; the config can persist it.
     pub start_minimized: bool,
-    /// Milestone 7: publish the filtered feed as a native PipeWire camera
-    /// node (`media.role = Camera`), next to the v4l2loopback device. On by
+    /// Publish the filtered feed as a native PipeWire camera node
+    /// (`media.role = Camera`), next to the v4l2loopback device. On by
     /// default — it is the only path PipeWire-based apps (Snapshot, cosmic
     /// camera, browsers via the portal) can consume on the pipewire builds
     /// that crash on v4l2loopback streams.
@@ -180,11 +180,11 @@ pub struct Stats {
     pub infer_ms: f64,
     pub composite_ms: f64,
     pub encode_ms: f64,
-    /// Milestone 5 gaze stage.
+    /// Gaze stage.
     pub gaze_ms: f64,
-    /// Milestone 6: the format actually negotiated with the input camera
-    /// (width, height, fps) — shown in the GUI status line. Set once per
-    /// stream (after `negotiate`), carried by the 2 s stats write.
+    /// The format actually negotiated with the input camera (width, height,
+    /// fps) — shown in the GUI status line. Set once per stream (after
+    /// `negotiate`), carried by the 2 s stats write.
     pub negotiated: Option<(u32, u32, f64)>,
     /// Milestone 8: Some while a recording is active.
     pub record: Option<RecordInfo>,
@@ -206,9 +206,9 @@ pub struct Shared {
     pub preview: Mutex<Option<PreviewFrame>>,
     pub preview_on: AtomicBool,
     pub stats: Mutex<Stats>,
-    /// Milestone 6: tray -> GUI "show/hide the window" requests. The GUI
-    /// watches edges of this on its tick and closes/reopens the window.
-    /// Initialized from `!settings.start_minimized`.
+    /// Tray -> GUI "show/hide the window" requests. The GUI watches edges of
+    /// this on its tick and closes/reopens the window. Initialized from
+    /// `!settings.start_minimized`.
     pub show_window: AtomicBool,
     /// Milestone 8: desired recording state (GUI Record button, tray item,
     /// `--record`). The pipeline watches edges of this in `capture_loop` and

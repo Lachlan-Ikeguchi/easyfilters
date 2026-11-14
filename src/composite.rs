@@ -1,4 +1,4 @@
-//! Compositing (milestone 3): temporal mask smoothing (EMA), feathered mask
+//! Compositing: temporal mask smoothing (EMA), feathered mask
 //! edges, background blur and background replace.
 //!
 //! Alpha blending is done in 8-bit with a scaled multiply:

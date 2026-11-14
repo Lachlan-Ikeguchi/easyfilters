@@ -1,4 +1,4 @@
-//! iced GUI (milestone 4): a live preview fed from the pipeline's preview
+//! iced GUI: a live preview fed from the pipeline's preview
 //! slot (RGBA frames straight out of the compositing stage, not re-read from
 //! the loopback device) plus controls for every runtime setting. Every change
 //! is applied to `Shared` immediately and persisted to the TOML config.
@@ -22,7 +22,7 @@ use crate::settings::{Mode, Shared, Stats};
 use crate::config;
 
 pub fn run(shared: Arc<Shared>, config_path: PathBuf) -> iced::Result {
-    // Milestone 6: run as an iced *daemon*. A daemon does not exit when its
+    // Run as an iced *daemon*. A daemon does not exit when its
     // last window closes, which is what makes a true "hide to tray"
     // possible: hide = `window::close` (the window is destroyed, not
     // minimized), show = `window::open`. winit 0.30 cannot unmap a window
@@ -77,7 +77,7 @@ struct App {
     gaze_strength: f32,
     // Mirror the whole feed horizontally.
     mirror: bool,
-    // Milestone 6: close the window to the tray instead of quitting.
+    // Close the window to the tray instead of quitting.
     close_to_tray: bool,
     // Milestone 8: recording toggle (runtime-only, not persisted).
     recording: bool,
@@ -249,6 +249,7 @@ impl App {
                 if s.close_to_tray != self.close_to_tray {
                     self.close_to_tray = s.close_to_tray;
                 }
+<<<<<<< HEAD
                 // Milestone 8: re-sync the record toggle (tray / --record).
                 let rec = self.shared.recording.load(Ordering::Relaxed);
                 if rec != self.recording {
@@ -256,6 +257,10 @@ impl App {
                 }
                 self.stats = self.shared.stats.lock().unwrap().clone();
                 // Milestone 6: tray "Show/Hide window" flips `show_window`;
+=======
+                self.stats = *self.shared.stats.lock().unwrap();
+                // Tray "Show/Hide window" flips `show_window`;
+>>>>>>> 940d360 (docs: remove milestone plans, streamline docs and code)
                 // apply it as a hide/show on the edge.
                 let want_visible = self.shared.show_window.load(Ordering::Relaxed);
                 if want_visible != self.window_visible {
@@ -276,8 +281,8 @@ impl App {
             Message::CloseRequested(id) => {
                 self.window_id = Some(id);
                 if self.close_to_tray {
-                    // Milestone 6: hide to the tray, keep filtering; the tray
-                    // "Show/Hide window" item brings the window back.
+                    // Hide to the tray, keep filtering; the tray "Show/Hide
+                    // window" item brings the window back.
                     self.window_visible = false;
                     self.shared.show_window.store(false, Ordering::Relaxed);
                     self.hide_task(id)
@@ -429,7 +434,7 @@ impl App {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             time::every(Duration::from_millis(33)).map(|_| Message::Tick),
-            // Milestone 6: close requests (handled above, not auto-exit).
+            // Close requests (handled above, not auto-exit).
             window::close_requests().map(Message::CloseRequested),
             // Window bookkeeping: capture the id of each opened window (open
             // + resize events) and notice when one is closed, so the
@@ -457,9 +462,15 @@ impl App {
                 .into(),
         };
 
+<<<<<<< HEAD
         let st = self.stats.clone();
         // Milestone 6: show the actually-negotiated stream format (the camera
         // may not support the requested WxH/fps).
+=======
+        let st = self.stats;
+        // Show the actually-negotiated stream format (the camera may not
+        // support the requested WxH/fps).
+>>>>>>> 940d360 (docs: remove milestone plans, streamline docs and code)
         let negotiated = match st.negotiated {
             Some((w, h, fps)) => format!("  |  negotiated {w}x{h}@{fps:.0}"),
             None => String::new(),

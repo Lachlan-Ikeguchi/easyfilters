@@ -20,8 +20,7 @@
           libclangLib = pkgs.llvmPackages.libclang.lib;
           easyfilters = pkgs.rustPlatform.buildRustPackage {
             pname = "easyfilters";
-            # Milestone 6: first packaged release (desktop file + icon,
-            # NixOS autostart option).
+            # Packaged release: desktop file + icon + NixOS autostart option.
             version = "0.2.0";
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
@@ -44,16 +43,16 @@
               linuxHeaders
               # libstdc++ for the opencv libs the binary links against.
               stdenv.cc.cc.lib
-              # winit (iced, milestone 4): wayland/x11 backends link or dlopen
+              # winit (iced GUI): wayland/x11 backends link or dlopen
               # libwayland and libxkbcommon at build/runtime.
               wayland
               libxkbcommon
               # tray-item's ksni backend links libdbus (via libdbus-sys) at
               # build time.
               dbus
-              # Milestone 7: native PipeWire camera source node (pwsource.rs)
-              # links libpipewire-0.3 via pkg-config; the wrapper below adds
-              # it to the runtime LD_LIBRARY_PATH.
+              # Native PipeWire camera source node (pwsource.rs) links
+              # libpipewire-0.3 via pkg-config; the wrapper below adds it to
+              # the runtime LD_LIBRARY_PATH.
               pipewire
             ];
 
@@ -73,8 +72,8 @@
                  assets/face_landmarks_478.onnx \
                  assets/blaze_face_short_range.onnx \
                  "$out/share/easyfilters/"
-              # Milestone 6 packaging: app-menu entry + hicolor icon (the
-              # same green rounded square the tray icon is generated from).
+              # App-menu entry + hicolor icon (the same green rounded square
+              # the tray icon is generated from).
               mkdir -p "$out/share/applications" \
                        "$out/share/icons/hicolor/scalable/apps"
               cp packaging/easyfilters.desktop "$out/share/applications/"
@@ -90,12 +89,12 @@
                     pkgs.wayland
                     pkgs.libxkbcommon
                     pkgs.dbus.lib
-                    # Milestone 7: the PipeWire source node links
-                    # libpipewire-0.3.so at runtime.
+                    # The PipeWire source node links libpipewire-0.3.so at
+                    # runtime.
                     pkgs.pipewire
-                    # Milestone 6: winit's X11 backend dlopens these at
-                    # runtime (Xwayland / X11-only sessions); the Wayland
-                    # path does not need them.
+                    # winit's X11 backend dlopens these at runtime
+                    # (Xwayland / X11-only sessions); the Wayland path does
+                    # not need them.
                     pkgs.xorg.libX11
                     pkgs.xorg.libXcursor
                     pkgs.xorg.libXi
@@ -134,7 +133,7 @@
         default = pkgs.runCommand "easyfilters-smoke" { } ''
           pkg=${self.packages.${pkgs.stdenv.hostPlatform.system}.default}
           $pkg/bin/easyfilters --help > "$out"
-          # Milestone 6: the packaged desktop file + icon must be present.
+          # The packaged desktop file + icon must be present.
           test -f "$pkg/share/applications/easyfilters.desktop"
           test -f "$pkg/share/icons/hicolor/scalable/apps/easyfilters.svg"
           grep -q "Icon=easyfilters" "$pkg/share/applications/easyfilters.desktop"
@@ -175,9 +174,9 @@
             wayland
             libxkbcommon
             dbus
-            # Milestone 7: libpipewire-0.3 dev files for the pwsource module.
+            # libpipewire-0.3 dev files for the pwsource module.
             pipewire
-            # X11 backend runtime libs (milestone 6: GUI on Xwayland/X11)
+            # X11 backend runtime libs (GUI on Xwayland/X11)
             xorg.libX11
             xorg.libXcursor
             xorg.libXi
@@ -237,8 +236,8 @@
             environment.systemPackages = [ cfg.package ];
             # /dev/video* nodes are accessible to the "video" group by default
             # udev rules; add your user to it if not already.
-            # Milestone 6: launch at login as a user service (graphical
-            # session), running in the background with the window hidden.
+            # Launch at login as a user service (graphical session), running
+            # in the background with the window hidden.
             systemd.user.services.easyfilters = lib.mkIf cfg.autostart {
               description = "EasyFilters virtual camera (background, tray only)";
               wantedBy = [ "graphical-session.target" ];

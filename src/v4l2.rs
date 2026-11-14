@@ -16,7 +16,6 @@ use v4l2r::{bindings, nix, Format, PixelFormat, PlaneLayout, QueueType};
 
 /// One MMAP buffer of a queue.
 pub struct Buffer {
-    pub index: u32,
     pub offset: u32,
     pub length: u32,
     pub mapping: PlaneMapping,
@@ -26,8 +25,6 @@ pub struct Buffer {
 pub struct Dequeued {
     pub index: u32,
     pub bytesused: u32,
-    pub flags: u32,
-    pub timestamp: bindings::timeval,
 }
 
 /// An opened V4L2 device.
@@ -66,9 +63,6 @@ impl Device {
     }
     pub fn device_caps(&self) -> Capabilities {
         self.caps.device_caps()
-    }
-    pub fn file(&self) -> &File {
-        &self.file
     }
 
     /// Enumerate the pixel formats of a queue (VIDIOC_ENUM_FMT).
@@ -221,7 +215,6 @@ impl Queue {
             let mapping = ioctl::mmap(&file, plane.mem_offset, plane.length)
                 .map_err(|e| anyhow!("mmap buffer {}: {:?}", i, e))?;
             buffers.push(Buffer {
-                index: i as u32,
                 offset: plane.mem_offset,
                 length: plane.length,
                 mapping,
@@ -285,8 +278,6 @@ impl Queue {
             Ok(_) => Ok(Some(Dequeued {
                 index: raw.index,
                 bytesused: raw.bytesused,
-                flags: raw.flags,
-                timestamp: raw.timestamp,
             })),
             Err(nix::errno::Errno::EAGAIN) | Err(nix::errno::Errno::EPIPE) => Ok(None),
             Err(e) => Err(anyhow!("VIDIOC_DQBUF {:?}: {:?}", self.queue_type, e)),

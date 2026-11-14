@@ -1,7 +1,8 @@
-//! easyfilters — milestone 5: gaze correction (capped, opt-in pupil shift)
-//! on top of the milestone 4 GUI + tray + config around the milestone 1-3
-//! capture/segment/composite pipeline. Without a display (or with --no-gui)
-//! it runs the pipeline headless with the previous CLI behavior.
+//! easyfilters — a virtual camera: the capture -> segment -> composite
+//! pipeline publishes the filtered feed to a v4l2loopback device and a native
+//! PipeWire camera node, with an optional iced GUI + tray on top (and
+//! optional capped gaze correction in the pipeline). Without a display (or
+//! with --no-gui) it runs the pipeline headless.
 
 mod autostart;
 mod composite;
@@ -46,7 +47,7 @@ fn install_signal_handlers() {
     // SAFETY: process-global handler installation, done once at startup.
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = handle_signal as libc::sighandler_t;
+        sa.sa_sigaction = handle_signal as *const () as libc::sighandler_t;
         libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
         libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
     }
@@ -55,7 +56,7 @@ fn install_signal_handlers() {
 #[derive(Parser)]
 #[command(
     name = "easyfilters",
-    about = "Virtual camera with background filters (GUI + tray + config; milestone 6: close-to-tray, --start-minimized, autostart; --no-gui for headless)"
+    about = "Virtual camera with background filters (GUI + tray + config; close-to-tray, --start-minimized, autostart; --no-gui for headless)"
 )]
 struct Args {
     /// Input camera device (default: auto-detect first uvcvideo capture node)
@@ -107,7 +108,7 @@ struct Args {
     /// Disable feed mirroring (overrides `mirror` in the config)
     #[arg(long)]
     no_mirror: bool,
-    /// Milestone 7: disable the native PipeWire camera node (default: on)
+    /// Disable the native PipeWire camera node (default: on)
     #[arg(long)]
     no_pipewire: bool,
     /// Gaze correction strength, 0..=1 (default: 0.5)
@@ -122,20 +123,20 @@ struct Args {
     /// Disable filtering (passthrough); overrides `enabled` in the config
     #[arg(long)]
     disable: bool,
-    /// Run headless: no GUI, no tray (milestone 1-3 behavior)
+    /// Run headless: no GUI, no tray
     #[arg(long)]
     no_gui: bool,
     /// Config file path (default: $XDG_CONFIG_HOME/easyfilters/config.toml)
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Milestone 6: start with the GUI window hidden (tray only); filtering
+    /// Start with the GUI window hidden (tray only); filtering
     /// keeps running. Sets `start_minimized` for this run (beats the config)
     #[arg(long)]
     start_minimized: bool,
-    /// Milestone 6: write the XDG autostart entry (~/.config/autostart/easyfilters.desktop) and exit
+    /// Write the XDG autostart entry (~/.config/autostart/easyfilters.desktop) and exit
     #[arg(long)]
     install_autostart: bool,
-    /// Milestone 6: remove the XDG autostart entry and exit
+    /// Remove the XDG autostart entry and exit
     #[arg(long)]
     uninstall_autostart: bool,
     /// Milestone 8: start recording at launch to this path (a directory gets
@@ -270,7 +271,7 @@ fn self_test(path: &Path, resolved: &Resolved) -> Result<()> {
     frame::write_image(&replace_path, &replaced)?;
     println!("wrote {} and {}", blur_path.display(), replace_path.display());
 
-    // Gaze stage (milestone 5): run the face detector + mesh on the image and
+    // Gaze stage: run the face detector + mesh on the image and
     // apply the capped pupil shift, using the feathered person mask so only
     // the person is corrected. Writes gaze.png and prints the per-eye shift.
     let t = Instant::now();
@@ -319,8 +320,7 @@ fn run(args: Args) -> Result<()> {
         return self_test(p, &resolved);
     }
 
-    // Milestone 6: autostart management short-circuits before any device or
-    // lock handling.
+    // Autostart management short-circuits before any device or lock handling.
     if args.install_autostart || args.uninstall_autostart {
         let raw_exe = std::env::current_exe().context("resolve current exe")?;
         // /proc/self/exe resolves to the inner .easyfilters-wrapped when run
@@ -354,14 +354,14 @@ fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // Validate --format before touching any device (milestone 6): a bad
-    // fourcc used to surface only inside the pipeline's retry loop.
+    // Validate --format before touching any device: a bad fourcc used to
+    // surface only inside the pipeline's retry loop.
     if let Some(f) = &resolved.device.format {
         pipeline::parse_fourcc(f).with_context(|| format!("invalid --format {f:?}"))?;
     }
 
-    // Milestone 6: single-instance lock. With autostart, a second manual
-    // launch would otherwise fail on the camera with a cryptic EBUSY.
+    // Single-instance lock. With autostart, a second manual launch would
+    // otherwise fail on the camera with a cryptic EBUSY.
     let _lock = match lock::acquire() {
         None => {
             warn!("XDG_RUNTIME_DIR unset; skipping the single-instance lock");
@@ -400,8 +400,8 @@ fn run(args: Args) -> Result<()> {
             }
         });
         tray::spawn(shared.clone(), config_path.clone());
-        // Milestone 6: never let a GUI startup failure kill the process —
-        // autostart entries run at login where a panic (e.g. missing X11
+        // Never let a GUI startup failure kill the process — autostart
+        // entries run at login where a panic (e.g. missing X11
         // libs when launched outside `nix develop` / the wrapped binary)
         // would otherwise stop filtering entirely. Fall back to headless.
         let gui_shared = shared.clone();
