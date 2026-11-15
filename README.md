@@ -26,7 +26,14 @@ camera and receive an already-filtered stream.
   persisted to the config).
 - Recording: an ffmpeg subprocess writes the filtered feed plus the default
   microphone to an .ogv (Theora/Vorbis) at the full feed resolution — GUI
-  Record button, tray toggle, or `--record <path>` at launch.
+  Record button, tray toggle, or `--record <path>` at launch. By default
+  recordings are buffered (the "Buffer recording" switch, `--record-buffer`,
+  `record_buffer = true`; `--no-record-buffer` / `record_buffer = false` for
+  the live pipe): frames are JPEG-spooled to disk during recording and the
+  .ogv is encoded in one pass when recording stops — the full camera fps
+  with a correct timeline even though live Theora encoding at 1080p30 falls
+  behind the camera (which makes live recordings play back sped up), at the
+  cost of disk space (~10-20x smaller than raw) and stop-time processing.
 - iced GUI (software renderer, no GPU needed) with a live preview straight
   from the compositing stage, plus a system-tray icon (D-Bus
   StatusNotifierItem, no gtk/appindicator needed).
@@ -117,6 +124,7 @@ the virtual camera; PipeWire clients see it as a source node too
 ./result/bin/easyfilters --no-mirror                           # force mirroring off (beats the config)
 ./result/bin/easyfilters --record ~/Videos/talk.ogv            # start recording at launch
 ./result/bin/easyfilters --record-dir ~/Recordings             # where recordings go by default
+./result/bin/easyfilters --record-buffer --record ~/Videos/talk.ogv   # spool frames, encode .ogv on stop
 ./result/bin/easyfilters --start-minimized                     # no window, tray only
 ./result/bin/easyfilters --install-autostart                   # ~/.config/autostart/easyfilters.desktop
 ./result/bin/easyfilters --uninstall-autostart
@@ -130,6 +138,17 @@ input as the audio track; ffmpeg stderr goes to `<file>.ffmpeg.log`. The
 nix wrapper puts `ffmpeg-full` on PATH; override the binary with
 `$EASYFILTERS_FFMPEG`.
 
+In buffered mode (the default; `--record-buffer`, `record_buffer = true`, or
+the GUI "Buffer recording" toggle) nothing is encoded live: every frame is
+JPEG-compressed (quality 92) to `<file>.frames.mjpeg` and the microphone to
+`<file>.audio.ogg` while recording, and a single ffmpeg pass encodes the
+final .ogv when recording stops (the process blocks on quit until that
+finalize finishes). Because the spool holds exactly the frames the camera
+produced, the video spans the true wall-clock duration at the negotiated
+fps — live mode can play back sped up when encoding at full resolution
+falls behind the camera. The spool files are deleted after a successful
+encode and kept (next to the .ogv, with `<file>.ffmpeg.log`) on failure.
+
 Model overrides: `--model <path>` / `$EASYFILTERS_MODEL` (segmentation) and
 `--face-model <path>` / `$EASYFILTERS_FACE_MODEL` (face mesh) default to the
 bundled models in `assets/`. `--config <path>` selects another config file.
@@ -138,10 +157,13 @@ bundled models in `assets/`. `--config <path>` selects another config file.
 
 The window has: filtering on/off, mode picker, blur strength and mask
 smoothing sliders, gaze-correction toggler + strength slider, mirror toggler,
-close-to-tray toggler, a Record/Stop-recording button, background image path
+close-to-tray toggler, a Record/Stop-recording button plus a "Buffer
+recording" switch (spool mode vs live encode), background image path
 (Enter to apply), and input camera / resolution / fps (Apply restarts the
 stream live). The status line shows the actually-negotiated resolution/fps,
-per-stage timings, and the active recording (file + frame/drop counts).
+per-stage timings, the active recording (file + frame/drop counts), and —
+while a buffered recording is being encoded after stop — a progress bar with
+the finalize percentage.
 Every change takes effect on the next frame and is saved to the config
 (recording state is runtime-only).
 

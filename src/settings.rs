@@ -91,6 +91,13 @@ pub struct Settings {
     /// Directory for recordings (None = $XDG_VIDEOS_DIR or ~/Videos). The
     /// `--record <path>` CLI flag overrides this for one run.
     pub record_dir: Option<PathBuf>,
+    /// Buffer recordings: JPEG-spool every frame to disk while recording and
+    /// encode the .ogv in one pass when recording stops (full camera fps,
+    /// correct timeline even if live encoding would fall behind; costs disk
+    /// space and stop-time processing). On by default — at full resolution the
+    /// single-threaded Theora encode in the live ffmpeg pipe cannot sustain
+    /// 30 fps, which makes the recording play back sped up. Off = live pipe.
+    pub record_buffer: bool,
 }
 
 impl Default for Settings {
@@ -108,6 +115,7 @@ impl Default for Settings {
             start_minimized: false,
             pipewire: true,
             record_dir: None,
+            record_buffer: true,
         }
     }
 }

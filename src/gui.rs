@@ -13,13 +13,15 @@ use std::time::Duration;
 
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, image, pick_list, row, scrollable, slider, text, text_input, toggler,
+    button, column, container, image, pick_list, progress_bar, row, scrollable, slider, text,
+    text_input, toggler,
 };
 use iced::window;
 use iced::{daemon, time, Alignment, ContentFit, Element, Length, Size, Subscription, Task, Theme};
 
 use crate::settings::{Mode, Shared, Stats};
 use crate::config;
+use crate::recorder::{self, FinalizeProgress};
 
 pub fn run(shared: Arc<Shared>, config_path: PathBuf) -> iced::Result {
     // Run as an iced *daemon*. A daemon does not exit when its
@@ -81,6 +83,8 @@ struct App {
     close_to_tray: bool,
     // Recording toggle (runtime-only, not persisted).
     recording: bool,
+    // Buffer recordings: spool frames to disk, encode the .ogv on stop.
+    record_buffer: bool,
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
     window_visible: bool,
@@ -94,6 +98,8 @@ struct App {
     preview_seq: u64,
     stats: Stats,
     status: String,
+    // Buffered-recording finalize in progress (encode .ogv after stop).
+    finalize: Option<FinalizeProgress>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +116,8 @@ enum Message {
     /// Record button — flip the shared recording flag; the pipeline
     /// starts/stops the ffmpeg recorder on the edge.
     ToggleRecord,
+    /// Buffer-recording switch — spool mode vs live ffmpeg pipe (persisted).
+    RecordBufferToggled(bool),
     /// The window was asked to close (WM close button): hide to tray when
     /// `close_to_tray`, else quit.
     CloseRequested(window::Id),
@@ -144,6 +152,7 @@ impl App {
             mirror: s.mirror,
             close_to_tray: s.close_to_tray,
             recording,
+            record_buffer: s.record_buffer,
             window_id: None,
             window_visible: !s.start_minimized,
             background_text: s
@@ -162,6 +171,7 @@ impl App {
             preview_seq: 0,
             stats: Stats::default(),
             status: "starting…".to_string(),
+            finalize: recorder::finalize_progress(),
         }
     }
 
@@ -177,6 +187,7 @@ impl App {
             s.gaze_strength = self.gaze_strength;
             s.mirror = self.mirror;
             s.close_to_tray = self.close_to_tray;
+            s.record_buffer = self.record_buffer;
         }
         if let Err(e) = config::save_current(&self.config_path, &self.shared) {
             self.status = format!("config save failed: {e}");
@@ -254,6 +265,11 @@ impl App {
                 if rec != self.recording {
                     self.recording = rec;
                 }
+                if s.record_buffer != self.record_buffer {
+                    self.record_buffer = s.record_buffer;
+                }
+                // Buffered-recording finalize progress (encode after stop).
+                self.finalize = recorder::finalize_progress();
                 self.stats = self.shared.stats.lock().unwrap().clone();
                 // Tray "Show/Hide window" flips `show_window`;
                 // apply it as a hide/show on the edge.
@@ -312,6 +328,13 @@ impl App {
                 self.shared
                     .recording
                     .store(self.recording, Ordering::Relaxed);
+                Task::none()
+            }
+            Message::RecordBufferToggled(v) => {
+                // Applies to the next recording started (the recorder backend
+                // is chosen when recording starts).
+                self.record_buffer = v;
+                self.apply_and_save();
                 Task::none()
             }
             Message::Toggled(v) => {
@@ -472,6 +495,22 @@ impl App {
             ),
             None => String::new(),
         };
+        // Buffered recording being encoded after stop: a filling progress bar.
+        let finalize_bar: Element<'_, Message> = match &self.finalize {
+            Some(f) => {
+                let name = std::path::Path::new(&f.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| f.path.clone());
+                column![
+                    text(format!("Finalizing {name} — {}%", f.permille / 10)).size(12),
+                    progress_bar(0.0..=100.0, f.permille as f32 / 10.0),
+                ]
+                .spacing(4)
+                .into()
+            }
+            None => text("").into(),
+        };
         let status = text(format!(
             "{}  |  {:.1} fps, {} frames, {} drops{negotiated}{record}  |  decode {:.1} / infer {:.1} / composite {:.1} / gaze {:.1} / encode {:.1} ms",
             self.status, st.fps, st.frames, st.drops, st.decode_ms, st.infer_ms, st.composite_ms, st.gaze_ms, st.encode_ms
@@ -511,6 +550,10 @@ impl App {
                 "Record"
             })
             .on_press(Message::ToggleRecord),
+            toggler(self.record_buffer)
+                .label("Buffer recording (spool frames, encode .ogv on stop)")
+                .on_toggle(Message::RecordBufferToggled),
+            finalize_bar,
             toggler(self.gaze_correction)
                 .label("Gaze correction (capped pupil shift)")
                 .on_toggle(Message::GazeToggled),

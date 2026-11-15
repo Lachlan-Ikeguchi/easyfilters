@@ -30,6 +30,9 @@ pub struct Config {
     pub pipewire: Option<bool>,
     /// Directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos).
     pub record_dir: Option<PathBuf>,
+    /// Buffer recordings: spool frames to disk, encode the .ogv on stop
+    /// (default: on = spool; false = live ffmpeg pipe).
+    pub record_buffer: Option<bool>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,
     pub width: Option<u32>,
@@ -99,6 +102,7 @@ pub fn save_current(path: &Path, shared: &Shared) -> Result<()> {
         start_minimized: Some(s.start_minimized),
         pipewire: Some(s.pipewire),
         record_dir: s.record_dir.clone(),
+        record_buffer: Some(s.record_buffer),
         input: d.input.clone(),
         output: d.output.clone(),
         width: Some(d.width),
@@ -164,6 +168,7 @@ mod tests {
             start_minimized: Some(true),
             pipewire: Some(true),
             record_dir: Some(PathBuf::from("/mnt/recordings")),
+            record_buffer: Some(true),
             input: Some(PathBuf::from("/dev/video1")),
             output: Some(PathBuf::from("/dev/video0")),
             width: Some(1920),

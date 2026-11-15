@@ -84,6 +84,19 @@ pub fn mask_mat(data: &[u8], cols: u32, rows: u32) -> Result<Mat> {
     Ok(m)
 }
 
+/// Build an 8UC3 BGR Mat (rows x cols, row-major) from a raw tightly packed
+/// BGR24 buffer.
+pub fn bgr_mat(data: &[u8], cols: u32, rows: u32) -> Result<Mat> {
+    let mut m = Mat::new_rows_cols_with_default(
+        rows as i32,
+        cols as i32,
+        CV_8UC3,
+        opencv::core::Scalar::all(0.0),
+    )?;
+    m.data_bytes_mut()?.copy_from_slice(data);
+    Ok(m)
+}
+
 /// BGR Mat -> tightly packed RGB bytes (input for the segmenter).
 pub fn bgr_to_rgb(mat: &Mat) -> Result<Vec<u8>> {
     let mut rgb = Mat::default();

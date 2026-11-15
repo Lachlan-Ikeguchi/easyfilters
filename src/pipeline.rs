@@ -18,7 +18,7 @@ use v4l2r::ioctl::Capabilities;
 use v4l2r::{bindings, PixelFormat, QueueType};
 
 use crate::gaze::GazeCorrector;
-use crate::recorder::{self, Recorder};
+use crate::recorder::{self, RecSink};
 use crate::segmentation::{Segmenter, MODEL_H, MODEL_W};
 use crate::settings::{DeviceParams, Mode, RecordInfo, Shared, Stats};
 use crate::v4l2::{Device, Queue};
@@ -359,12 +359,19 @@ fn run_stream(shared: &Shared) -> Result<()> {
 
 /// Build the output path for a new recording — `--record <path>`
 /// (Shared::record_path) beats the configured `record_dir`, which beats the
-/// default videos dir — and start the Recorder at the negotiated geometry.
-fn start_recorder(shared: &Shared, w: u32, h: u32, num: u32, den: u32) -> Result<Recorder> {
+/// default videos dir — and start a recorder at the negotiated geometry:
+/// the disk-spool backend when `record_buffer` is set, else the live one.
+fn start_recorder(
+    shared: &Shared,
+    w: u32,
+    h: u32,
+    num: u32,
+    den: u32,
+) -> Result<Box<dyn RecSink>> {
     let explicit = shared.record_path.lock().unwrap().clone();
-    let dir = shared.snapshot_settings().record_dir;
-    let path = recorder::resolve_output_path(dir.as_deref(), explicit.as_deref())?;
-    Recorder::start(w, h, num, den, path)
+    let s = shared.snapshot_settings();
+    let path = recorder::resolve_output_path(s.record_dir.as_deref(), explicit.as_deref())?;
+    recorder::start_any(w, h, num, den, path, s.record_buffer)
 }
 
 /// Decode + filter one raw input frame according to the current shared
@@ -383,7 +390,7 @@ fn filter_frame(
     bg: &mut Option<Mat>,
     bg_loaded_gen: &mut u64,
     gaze: &mut Option<GazeCorrector>,
-    rec: Option<&Recorder>,
+    rec: Option<&dyn RecSink>,
     src: &[u8],
     w: u32,
     h: u32,
@@ -591,7 +598,7 @@ fn capture_loop(
     let mut gaze: Option<GazeCorrector> = None;
     // The recorder, started/stopped on edges of `shared.recording`
     // (GUI Record button / tray / `--record`).
-    let mut recorder: Option<Recorder> = None;
+    let mut recorder: Option<Box<dyn RecSink>> = None;
 
     let mut out_inflight = vec![false; out_q.buffers.len()];
     let mut frames = 0u64;
@@ -665,7 +672,7 @@ fn capture_loop(
                         &mut bg,
                         &mut bg_loaded_gen,
                         &mut gaze,
-                        recorder.as_ref(),
+                        recorder.as_ref().map(|v| &**v),
                         src,
                         w,
                         h,

@@ -146,6 +146,15 @@ struct Args {
     /// Directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos)
     #[arg(long)]
     record_dir: Option<PathBuf>,
+    /// Buffer recordings (default: on): JPEG-spool frames to disk and encode
+    /// the .ogv in one pass when recording stops (full camera fps, correct
+    /// timeline; costs disk space and stop-time processing).
+    #[arg(long)]
+    record_buffer: bool,
+    /// Disable buffered recordings (live ffmpeg pipe). Overrides
+    /// `record_buffer` in the config.
+    #[arg(long)]
+    no_record_buffer: bool,
 }
 
 struct Resolved {
@@ -199,6 +208,11 @@ fn resolve(args: &Args, cfg: &Config) -> Resolved {
             start_minimized: start_minimized.unwrap_or(false),
             pipewire: !args.no_pipewire && cfg.pipewire.unwrap_or(true),
             record_dir: args.record_dir.clone().or_else(|| cfg.record_dir.clone()),
+            record_buffer: if args.no_record_buffer {
+                false
+            } else {
+                args.record_buffer || cfg.record_buffer.unwrap_or(true)
+            },
         },
         device: DeviceParams {
             input: args.input.clone().or_else(|| cfg.input.clone()),
@@ -413,6 +427,9 @@ fn run(args: Args) -> Result<()> {
                 // Window closed or tray quit: stop the pipeline and wait for it.
                 shared.stop();
                 let _ = pipe.join();
+                // A buffered recording finalizes on a background thread;
+                // block until it finishes so the .ogv is complete.
+                recorder::wait_for_finalize();
                 res.map_err(|e| anyhow::anyhow!("gui exited with error: {e}"))
             }
             Err(payload) => {
@@ -431,11 +448,14 @@ fn run(args: Args) -> Result<()> {
                     thread::sleep(Duration::from_millis(200));
                 }
                 let _ = pipe.join();
+                recorder::wait_for_finalize();
                 Ok(())
             }
         }
     } else {
-        pipeline::run(shared)
+        let r = pipeline::run(shared);
+        recorder::wait_for_finalize();
+        r
     }
 }
 
@@ -601,5 +621,25 @@ mod tests {
             Args::try_parse_from(["easyfilters", "--record-dir", "/tmp/rec"]).unwrap();
         let r = resolve(&args, &cfg);
         assert_eq!(r.settings.record_dir, Some(PathBuf::from("/tmp/rec")));
+    }
+
+    #[test]
+    fn resolve_record_buffer_defaults_on_and_can_be_disabled() {
+        // default: on (live Theora encode cannot sustain 1080p30)
+        let args = Args::try_parse_from(["easyfilters"]).unwrap();
+        assert!(resolve(&args, &Config::default()).settings.record_buffer);
+        // config can turn it off
+        let cfg = Config {
+            record_buffer: Some(false),
+            ..Default::default()
+        };
+        assert!(!resolve(&args, &cfg).settings.record_buffer);
+        // --no-record-buffer beats the config
+        let args =
+            Args::try_parse_from(["easyfilters", "--no-record-buffer"]).unwrap();
+        assert!(!resolve(&args, &Config::default()).settings.record_buffer);
+        // --record-buffer forces it on over a config off
+        let args = Args::try_parse_from(["easyfilters", "--record-buffer"]).unwrap();
+        assert!(resolve(&args, &cfg).settings.record_buffer);
     }
 }
