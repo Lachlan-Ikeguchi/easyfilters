@@ -178,10 +178,14 @@ driven by `Shared`; headless 1280x720@30 at ~29.8 fps, 0 drops in release).
   recording. Mitigation: `-use_wallclock_as_timestamps 1` (step 2 verifies),
   fallback = pad duplicates to wall-clock pace in the writer thread.
   Acceptance: ffprobe stream durations match wall clock within ~0.5 s.
-- **R2 — Theora CPU cost:** libtheora q6 at 720p30 runs inside the ffmpeg
-  process, so our hot path is safe, but total CPU rises; if the box struggles,
-  lower to `-q:v 5` or downscale recorder input to 960x540 in the writer
-  thread (opencv resize off the hot path). Measure in Verify step 4.
+- **R2 — Theora CPU cost:** libtheora at 720p30 runs inside the ffmpeg
+  process, so our hot path is safe, but total CPU rises (~136 ms/frame at
+  720p q5 on this loaded box — it cannot hold 30 fps there; on an idle
+  desktop it is much closer). Resolution is **not** capped anymore (user
+  decision 2026-11-15: record at the full preview resolution); if the
+  encoder falls behind, the writer thread blocks on the pipe and the video
+  timeline lags the audio. Lowering `-q:v` or capping height again are the
+  remedies if that ever shows. Quality knob (`THEORA_Q`) stays a const.
 - **R3 — "default input" may be a monitor or the wrong mic on some setups.**
   The request is explicit (pulseaudio default input), so we record exactly
   that; a per-device picker is a follow-up.
@@ -219,10 +223,13 @@ driven by `Shared`; headless 1280x720@30 at ~29.8 fps, 0 drops in release).
   arg is asserted in the `ffmpeg_args` unit test.
 - **libtheora is single-threaded and cannot hold 720p30 on a busy box** (load
   avg ~30 on the 12-core i5-1235U): 720p q6 ≈ 181 ms/frame, q5 ≈ 136 ms,
-  854x480 q6 ≈ 59 ms, 640x360 q6 ≈ 60 ms. Hence `RECORD_MAX_HEIGHT = 540`:
-  frames taller than 540p are downscaled in the writer thread (off the capture
-  hot path) before being written. On an idle box 720p still records at 960x540
-  q5 — making the cap/quality configurable is a follow-up.
+  854x480 q6 ≈ 59 ms, 640x360 q6 ≈ 60 ms. An initial `RECORD_MAX_HEIGHT = 540`
+  downscale in the writer thread was therefore tried, but the user asked for
+  the recording to match the preview, so the cap and the downscale path were
+  **removed** (commit after `0531cb5`): the recorder now always writes the
+  full negotiated WxH (even-rounded). Remaining quality gap vs the preview is
+  then purely the codec: Theora q5 with 4:2:0 chroma vs the uncompressed RGBA
+  preview — raising `THEORA_Q` is the knob if it ever bothers.
 - **Stop semantics:** `Recorder::drop` sends SIGINT (ffmpeg finalizes the ogg,
   exit 255), waits 10 s, then SIGKILL; the writer thread exits on EPIPE. One test
   run didn't exit within 15 s while blocked in the pulse read, so the SIGKILL

@@ -26,17 +26,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
-use opencv::core::{Mat, Scalar, CV_8UC3};
-use opencv::prelude::*;
 use tracing::{info, warn};
 use v4l2r::nix::libc;
 
-use crate::frame;
-
-/// Frames taller than this are downscaled in the writer thread before being
-/// written — libtheora is single-threaded and cannot hold 720p30 on a busy
-/// CPU; 540p keeps a comfortable margin (see plan/milestone8.md risk R2).
-pub(crate) const RECORD_MAX_HEIGHT: u32 = 540;
 /// Theora video quality 0-10, Vorbis audio quality 0-10.
 const THEORA_Q: &str = "5";
 const VORBIS_Q: &str = "4";
@@ -112,15 +104,10 @@ fn ffmpeg_args(rw: u32, rh: u32, den: u32, num: u32, audio: bool, path: &Path) -
     a
 }
 
-/// Record dimensions: never taller than RECORD_MAX_HEIGHT, always even
-/// (Theora wants even luma dimensions).
+/// Record dimensions: the full feed resolution (same as the preview), only
+/// rounded to even (Theora wants even luma dimensions).
 fn rec_dims(w: u32, h: u32) -> (u32, u32) {
-    if h <= RECORD_MAX_HEIGHT {
-        return (w.max(2) & !1, h.max(2) & !1);
-    }
-    let scale = RECORD_MAX_HEIGHT as f64 / h as f64;
-    let rw = ((w as f64 * scale) as u32).max(2) & !1;
-    (rw, RECORD_MAX_HEIGHT & !1)
+    (w.max(2) & !1, h.max(2) & !1)
 }
 
 /// Local-time slug for recording filenames: YYYY-MM-DD_HH-MM-SS.
@@ -249,7 +236,7 @@ impl Recorder {
                 let slot = Arc::clone(&slot);
                 let running = Arc::clone(&running);
                 let frames = Arc::clone(&frames);
-                move || writer_loop(stdin, slot, running, frames, interval, w, h, rw, rh)
+                move || writer_loop(stdin, slot, running, frames, interval)
             })
             .map_err(|e| anyhow!("spawn recorder writer thread: {e}"))?;
 
@@ -344,19 +331,14 @@ impl Drop for Recorder {
 
 /// Writer thread: write exactly one frame per `interval` (CFR pacing keeps
 /// count-based PTS == wall clock), repeating the latest frame when the
-/// producer dropped one. Downscales to rw×rh when the feed is taller than
-/// RECORD_MAX_HEIGHT.
-#[allow(clippy::too_many_arguments)]
+/// producer dropped one. Frames go out at the full feed resolution — the
+/// recording matches the preview.
 fn writer_loop(
     mut stdin: ChildStdin,
     slot: FrameSlot,
     running: Arc<AtomicBool>,
     frames: Arc<AtomicU64>,
     interval: Duration,
-    w: u32,
-    h: u32,
-    rw: u32,
-    rh: u32,
 ) {
     let start = Instant::now();
     let mut tick = 0u64;
@@ -379,37 +361,7 @@ fn writer_loop(
                 None => continue, // nothing produced yet; don't advance PTS
             },
         };
-        let written: &[u8] = if (rw, rh) == (w, h) {
-            &current
-        } else {
-            // Downscale on this thread, off the capture hot path.
-            let down = (|| -> Result<Vec<u8>> {
-                let mut mat = Mat::new_rows_cols_with_default(
-                    h as i32,
-                    w as i32,
-                    CV_8UC3,
-                    Scalar::all(0.0),
-                )?;
-                mat.data_bytes_mut()?.copy_from_slice(&current);
-                let small = frame::resize(&mat, rw, rh)?;
-                Ok(small.data_bytes()?.to_vec())
-            })();
-            match down {
-                Ok(buf) => {
-                    // buf must outlive the write_all below — keep it in scope.
-                    if stdin.write_all(&buf).is_err() {
-                        break;
-                    }
-                    frames.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-                Err(e) => {
-                    warn!(error = %e, "recorder downscale failed; skipping frame");
-                    continue;
-                }
-            }
-        };
-        if stdin.write_all(written).is_err() {
+        if stdin.write_all(&current).is_err() {
             // ffmpeg exited (SIGINT on stop, or it died) — EPIPE.
             break;
         }
@@ -449,12 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn rec_dims_caps_height_and_keeps_even() {
-        assert_eq!(rec_dims(1280, 720), (960, 540));
-        assert_eq!(rec_dims(1920, 1080), (960, 540));
-        assert_eq!(rec_dims(640, 360), (640, 360)); // small feeds untouched
-        assert_eq!(rec_dims(1281, 721).1, 540);
-        assert_eq!(rec_dims(1281, 721).0 % 2, 0);
+    fn rec_dims_keeps_full_resolution_and_rounds_even() {
+        // The recording matches the preview: no downscale cap.
+        assert_eq!(rec_dims(1280, 720), (1280, 720));
+        assert_eq!(rec_dims(1920, 1080), (1920, 1080));
+        assert_eq!(rec_dims(640, 360), (640, 360));
+        assert_eq!(rec_dims(1281, 721), (1280, 720));
     }
 
     #[test]
