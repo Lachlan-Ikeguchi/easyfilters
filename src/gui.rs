@@ -85,6 +85,8 @@ struct App {
     recording: bool,
     // Buffer recordings: spool frames to disk, encode the .ogv on stop.
     record_buffer: bool,
+    // Recordings directory text field (empty = $XDG_VIDEOS_DIR or ~/Videos).
+    record_dir_text: String,
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
     window_visible: bool,
@@ -118,6 +120,9 @@ enum Message {
     ToggleRecord,
     /// Buffer-recording switch — spool mode vs live ffmpeg pipe (persisted).
     RecordBufferToggled(bool),
+    /// Recordings directory text field (applied on Enter).
+    RecordDirChanged(String),
+    RecordDirSubmit,
     /// The window was asked to close (WM close button): hide to tray when
     /// `close_to_tray`, else quit.
     CloseRequested(window::Id),
@@ -153,6 +158,11 @@ impl App {
             close_to_tray: s.close_to_tray,
             recording,
             record_buffer: s.record_buffer,
+            record_dir_text: s
+                .record_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
             window_id: None,
             window_visible: !s.start_minimized,
             background_text: s
@@ -268,6 +278,14 @@ impl App {
                 if s.record_buffer != self.record_buffer {
                     self.record_buffer = s.record_buffer;
                 }
+                let rd = s
+                    .record_dir
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                if rd != self.record_dir_text {
+                    self.record_dir_text = rd;
+                }
                 // Buffered-recording finalize progress (encode after stop).
                 self.finalize = recorder::finalize_progress();
                 self.stats = self.shared.stats.lock().unwrap().clone();
@@ -335,6 +353,34 @@ impl App {
                 // is chosen when recording starts).
                 self.record_buffer = v;
                 self.apply_and_save();
+                Task::none()
+            }
+            Message::RecordDirChanged(t) => {
+                self.record_dir_text = t;
+                Task::none()
+            }
+            Message::RecordDirSubmit => {
+                // Applies to the next recording started. Empty = default
+                // videos dir ($XDG_VIDEOS_DIR or ~/Videos).
+                let path = self.record_dir_text.trim().to_string();
+                {
+                    let mut s = self.shared.settings.write().unwrap();
+                    s.record_dir = if path.is_empty() {
+                        None
+                    } else {
+                        Some(PathBuf::from(&path))
+                    };
+                }
+                match config::save_current(&self.config_path, &self.shared) {
+                    Ok(()) => {
+                        self.status = if path.is_empty() {
+                            "recordings: ~/Videos".to_string()
+                        } else {
+                            format!("recordings: {path}")
+                        };
+                    }
+                    Err(e) => self.status = format!("config save failed: {e}"),
+                }
                 Task::none()
             }
             Message::Toggled(v) => {
@@ -553,6 +599,13 @@ impl App {
             toggler(self.record_buffer)
                 .label("Buffer recording (spool frames, encode .ogv on stop)")
                 .on_toggle(Message::RecordBufferToggled),
+            column![
+                text("Recordings directory (empty = ~/Videos), Enter to apply:"),
+                text_input("~/Videos", &self.record_dir_text)
+                    .on_input(Message::RecordDirChanged)
+                    .on_submit(Message::RecordDirSubmit),
+            ]
+            .spacing(4),
             finalize_bar,
             toggler(self.gaze_correction)
                 .label("Gaze correction (capped pupil shift)")

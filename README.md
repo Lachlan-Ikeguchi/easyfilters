@@ -158,7 +158,8 @@ bundled models in `assets/`. `--config <path>` selects another config file.
 The window has: filtering on/off, mode picker, blur strength and mask
 smoothing sliders, gaze-correction toggler + strength slider, mirror toggler,
 close-to-tray toggler, a Record/Stop-recording button plus a "Buffer
-recording" switch (spool mode vs live encode), background image path
+recording" switch (spool mode vs live encode), recordings directory (Enter
+to apply, empty = ~/Videos), background image path
 (Enter to apply), and input camera / resolution / fps (Apply restarts the
 stream live). The status line shows the actually-negotiated resolution/fps,
 per-stage timings, the active recording (file + frame/drop counts), and —
