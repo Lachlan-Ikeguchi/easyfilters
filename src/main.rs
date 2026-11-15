@@ -139,11 +139,11 @@ struct Args {
     /// Remove the XDG autostart entry and exit
     #[arg(long)]
     uninstall_autostart: bool,
-    /// Milestone 8: start recording at launch to this path (a directory gets
-    /// a timestamped .ogv inside it; a file path is used verbatim)
+    /// Start recording at launch to this path (a directory gets a timestamped
+    /// .ogv inside it; a file path is used verbatim)
     #[arg(long)]
     record: Option<PathBuf>,
-    /// Milestone 8: directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos)
+    /// Directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos)
     #[arg(long)]
     record_dir: Option<PathBuf>,
 }
@@ -378,8 +378,8 @@ fn run(args: Args) -> Result<()> {
     };
 
     let shared = Arc::new(Shared::new(resolved.settings, resolved.device));
-    // Milestone 8: `--record <path>` starts recording immediately (headless
-    // friendly); the pipeline picks the flag up in its capture loop.
+    // `--record <path>` starts recording immediately (headless friendly);
+    // the pipeline picks the flag up in its capture loop.
     if let Some(p) = &args.record {
         *shared.record_path.lock().unwrap() = Some(p.clone());
         shared.recording.store(true, Ordering::SeqCst);

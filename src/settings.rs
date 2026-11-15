@@ -88,8 +88,8 @@ pub struct Settings {
     /// camera, browsers via the portal) can consume on the pipewire builds
     /// that crash on v4l2loopback streams.
     pub pipewire: bool,
-    /// Milestone 8: directory for recordings (None = $XDG_VIDEOS_DIR or
-    /// ~/Videos). The `--record <path>` CLI flag overrides this for one run.
+    /// Directory for recordings (None = $XDG_VIDEOS_DIR or ~/Videos). The
+    /// `--record <path>` CLI flag overrides this for one run.
     pub record_dir: Option<PathBuf>,
 }
 
@@ -160,8 +160,8 @@ pub struct PreviewFrame {
     pub seq: u64,
 }
 
-/// Milestone 8: live recording state, carried by the 2 s stats write so the
-/// GUI status line can show the output file and frame/drop counts.
+/// Live recording state, carried by the 2 s stats write so the GUI status
+/// line can show the output file and frame/drop counts.
 #[derive(Clone, Debug, Default)]
 pub struct RecordInfo {
     pub path: String,
@@ -186,7 +186,7 @@ pub struct Stats {
     /// fps) — shown in the GUI status line. Set once per stream (after
     /// `negotiate`), carried by the 2 s stats write.
     pub negotiated: Option<(u32, u32, f64)>,
-    /// Milestone 8: Some while a recording is active.
+    /// Some while a recording is active.
     pub record: Option<RecordInfo>,
 }
 
@@ -210,12 +210,12 @@ pub struct Shared {
     /// this on its tick and closes/reopens the window. Initialized from
     /// `!settings.start_minimized`.
     pub show_window: AtomicBool,
-    /// Milestone 8: desired recording state (GUI Record button, tray item,
-    /// `--record`). The pipeline watches edges of this in `capture_loop` and
-    /// starts/stops the Recorder. Runtime-only — not persisted to the config.
+    /// Desired recording state (GUI Record button, tray item, `--record`).
+    /// The pipeline watches edges of this in `capture_loop` and starts/stops
+    /// the Recorder. Runtime-only — not persisted to the config.
     pub recording: AtomicBool,
-    /// Milestone 8: explicit output path from `--record <path>` (a directory
-    /// gets a timestamped file inside it). Beats `settings.record_dir`.
+    /// Explicit output path from `--record <path>` (a directory gets a
+    /// timestamped file inside it). Beats `settings.record_dir`.
     pub record_path: Mutex<Option<PathBuf>>,
 }
 

@@ -28,7 +28,7 @@ pub struct Config {
     pub start_minimized: Option<bool>,
     /// Publish a native PipeWire camera node (default: on).
     pub pipewire: Option<bool>,
-    /// Milestone 8: directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos).
+    /// Directory for recordings (default: $XDG_VIDEOS_DIR or ~/Videos).
     pub record_dir: Option<PathBuf>,
     pub input: Option<PathBuf>,
     pub output: Option<PathBuf>,

@@ -137,8 +137,8 @@
           test -f "$pkg/share/applications/easyfilters.desktop"
           test -f "$pkg/share/icons/hicolor/scalable/apps/easyfilters.svg"
           grep -q "Icon=easyfilters" "$pkg/share/applications/easyfilters.desktop"
-          # Milestone 8: the record feature needs ffmpeg with the
-          # libtheora/libvorbis encoders and the pulse input device — the
+          # The record feature needs ffmpeg with the libtheora/libvorbis
+          # encoders and the pulse input device — the
           # wrapper puts ffmpeg-full on PATH. (Capture ffmpeg's output into a
           # variable first: stdenv runs with pipefail, and `ffmpeg | grep -q`
           # would fail with SIGPIPE/141 once grep -q exits at the first match.)
@@ -161,12 +161,12 @@
             opencv4
             llvmPackages.libclang.lib
             linuxHeaders
-            # runtime/debug tooling used by the repo scripts and plans.
-            # Milestone 8: ffmpeg-full (not ffmpeg) — the record feature shells
-            # out to ffmpeg and needs the libtheora/libvorbis encoders and the
-            # pulse input device, which plain pkgs.ffmpeg does not build with
-            # (withTheora/withVorbis default to withHeadlessDeps = false).
+            # runtime/debug tooling used by the repo scripts.
             v4l-utils
+            # ffmpeg-full (not ffmpeg) — the record feature shells out to
+            # ffmpeg and needs the libtheora/libvorbis encoders and the pulse
+            # input device, which plain pkgs.ffmpeg does not build with
+            # (withTheora/withVorbis default to withHeadlessDeps = false).
             ffmpeg-full
             (python3.withPackages (ps: [ ps.opencv4 ]))
             # winit (iced GUI) dlopens these at runtime; dbus dev files let

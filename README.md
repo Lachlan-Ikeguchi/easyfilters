@@ -22,6 +22,11 @@ camera and receive an already-filtered stream.
 - Optional, capped gaze correction ("eye contact"): MediaPipe BlazeFace +
   Face Mesh shift the iris a small, hard-capped amount toward the camera.
   Off by default.
+- Optional horizontal mirror of the whole feed (`--mirror`, GUI/tray toggle,
+  persisted to the config).
+- Recording: an ffmpeg subprocess writes the filtered feed plus the default
+  microphone to an .ogv (Theora/Vorbis) at the full feed resolution — GUI
+  Record button, tray toggle, or `--record <path>` at launch.
 - iced GUI (software renderer, no GPU needed) with a live preview straight
   from the compositing stage, plus a system-tray icon (D-Bus
   StatusNotifierItem, no gtk/appindicator needed).
@@ -108,10 +113,22 @@ the virtual camera; PipeWire clients see it as a source node too
 ./result/bin/easyfilters --gaze                                # enable gaze correction
 ./result/bin/easyfilters --gaze --gaze-strength 0.8            # stronger (still capped)
 ./result/bin/easyfilters --no-gaze                             # force gaze off (beats the config)
+./result/bin/easyfilters --mirror                              # flip the whole feed horizontally
+./result/bin/easyfilters --no-mirror                           # force mirroring off (beats the config)
+./result/bin/easyfilters --record ~/Videos/talk.ogv            # start recording at launch
+./result/bin/easyfilters --record-dir ~/Recordings             # where recordings go by default
 ./result/bin/easyfilters --start-minimized                     # no window, tray only
 ./result/bin/easyfilters --install-autostart                   # ~/.config/autostart/easyfilters.desktop
 ./result/bin/easyfilters --uninstall-autostart
 ```
+
+A `--record` path that is a directory (or ends in `/`) gets a timestamped
+`easyfilters-<datetime>.ogv` inside it; anything else is used verbatim as the
+file. The recording captures exactly what the virtual camera emits (post
+filter + mirror) at the negotiated resolution, with the PulseAudio default
+input as the audio track; ffmpeg stderr goes to `<file>.ffmpeg.log`. The
+nix wrapper puts `ffmpeg-full` on PATH; override the binary with
+`$EASYFILTERS_FFMPEG`.
 
 Model overrides: `--model <path>` / `$EASYFILTERS_MODEL` (segmentation) and
 `--face-model <path>` / `$EASYFILTERS_FACE_MODEL` (face mesh) default to the
@@ -120,14 +137,16 @@ bundled models in `assets/`. `--config <path>` selects another config file.
 ### GUI and tray
 
 The window has: filtering on/off, mode picker, blur strength and mask
-smoothing sliders, gaze-correction toggler + strength slider, close-to-tray
-toggler, background image path (Enter to apply), and input camera /
-resolution / fps (Apply restarts the stream live). The status line shows the
-actually-negotiated resolution/fps and per-stage timings. Every change takes
-effect on the next frame and is saved to the config.
+smoothing sliders, gaze-correction toggler + strength slider, mirror toggler,
+close-to-tray toggler, a Record/Stop-recording button, background image path
+(Enter to apply), and input camera / resolution / fps (Apply restarts the
+stream live). The status line shows the actually-negotiated resolution/fps,
+per-stage timings, and the active recording (file + frame/drop counts).
+Every change takes effect on the next frame and is saved to the config
+(recording state is runtime-only).
 
 The tray menu has "Toggle filtering", "Toggle gaze correction",
-"Show/Hide window" and "Quit". Hiding the window is a real hide on every
+"Toggle mirror", "Toggle recording", "Show/Hide window" and "Quit". Hiding the window is a real hide on every
 platform — the GUI runs as an iced *daemon*, so "hide" destroys the window
 (`window::close`; winit can't unmap a Wayland window, only minimize) and
 "Show window" re-opens a fresh one; the process and the filtering keep
@@ -143,9 +162,9 @@ logged and the app keeps filtering headless instead of dying.
 Precedence: **CLI flag > config file > built-in default**, e.g. `--mode blur`
 on the command line beats `mode = "replace"` in the config. Keys mirror the
 flags: `enabled`, `mode`, `blur_strength`, `mask_smoothing`, `background`,
-`gaze_correction`, `gaze_strength`, `close_to_tray` (default true),
-`start_minimized`, `pipewire` (default true), `input`, `output`, `width`,
-`height`, `fps`, `format`, `buffers`, `model`, `face_model`.
+`gaze_correction`, `gaze_strength`, `mirror`, `close_to_tray` (default true),
+`start_minimized`, `pipewire` (default true), `record_dir`, `input`, `output`,
+`width`, `height`, `fps`, `format`, `buffers`, `model`, `face_model`.
 
 On NixOS, `easyfilters.autostart = true;` in the flake's module starts the
 package as a systemd user service (`--start-minimized`) at graphical login
@@ -205,7 +224,7 @@ Coverage:
 
 ```
 src/        pipeline (capture → segment → composite → loopback + PipeWire),
-            GUI, tray, config, autostart, single-instance lock
+            recorder (ffmpeg .ogv), GUI, tray, config, autostart, lock
 assets/     bundled ONNX models (Apache-2.0) + licenses + app icon
 scripts/    setup-virtual-camera.sh (v4l2loopback), debug_camera.py
 examples/   ONNX model I/O probes (dump_model.rs, probe_face.rs)

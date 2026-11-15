@@ -1,5 +1,5 @@
-//! Frame helpers (opencv): MJPG decode, resize, RGB conversion, mask
-//! rendering and JPEG encode.
+//! Frame helpers (opencv): MJPG decode, resize, RGB conversion, horizontal
+//! flip, mask rendering and JPEG encode.
 
 use anyhow::{bail, Context, Result};
 use opencv::core::{AlgorithmHint, Mat, Size, Vector, CV_8UC3};

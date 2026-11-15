@@ -1,9 +1,8 @@
 //! The capture -> segment -> composite -> loopback pipeline, run on its own
 //! thread, driven live by the `Shared` settings the GUI/tray write. The
-//! per-frame hot path only takes an
-//! uncontended `RwLock` read plus a few atomic loads; anything expensive
-//! (model load, background image load) happens once, lazily, or on a
-//! generation bump.
+//! per-frame hot path only takes an uncontended `RwLock` read plus a few
+//! atomic loads; anything expensive (model load, background image load)
+//! happens once, lazily, or on a generation bump.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -358,7 +357,7 @@ fn run_stream(shared: &Shared) -> Result<()> {
     result
 }
 
-/// Milestone 8: build the output path for a new recording — `--record <path>`
+/// Build the output path for a new recording — `--record <path>`
 /// (Shared::record_path) beats the configured `record_dir`, which beats the
 /// default videos dir — and start the Recorder at the negotiated geometry.
 fn start_recorder(shared: &Shared, w: u32, h: u32, num: u32, den: u32) -> Result<Recorder> {
@@ -371,10 +370,10 @@ fn start_recorder(shared: &Shared, w: u32, h: u32, num: u32, den: u32) -> Result
 /// Decode + filter one raw input frame according to the current shared
 /// settings. Returns the exact bytes to write to the loopback (a verbatim
 /// copy for passthrough, JPEG otherwise), the stage timings, and an optional
-/// RGBA preview frame. `Ok(None)` = drop the frame (undecodable input).
-/// Milestone 8: when `rec` is set, the post-filter BGR frame is also handed
-/// to the recorder (the recording shows exactly what the virtual camera
-/// emits — in passthrough mode the raw MJPG is decoded for it).
+/// RGBA preview frame. `Ok(None)` = drop the frame (undecodable input). When
+/// `rec` is set, the post-filter BGR frame is also handed to the recorder
+/// (the recording shows exactly what the virtual camera emits — in
+/// passthrough mode the raw MJPG is decoded for it).
 #[allow(clippy::too_many_arguments)]
 fn filter_frame(
     shared: &Shared,
@@ -542,9 +541,9 @@ fn filter_frame(
         out_img = frame::flip_horizontal(&out_img)?;
     }
 
-    // Milestone 8: tap the post-filter frame into the recorder before the
-    // JPEG encode (the recorder wants raw BGR, not MJPG). The tap is after
-    // the mirror flip, so the recording matches the virtual camera exactly.
+    // Tap the post-filter frame into the recorder before the JPEG encode
+    // (the recorder wants raw BGR, not MJPG). The tap is after the mirror
+    // flip, so the recording matches the virtual camera exactly.
     if let Some(r) = rec {
         r.write_frame(out_img.data_bytes()?);
     }
@@ -590,8 +589,8 @@ fn capture_loop(
     let mut bg: Option<Mat> = None;
     let mut bg_loaded_gen: u64 = u64::MAX;
     let mut gaze: Option<GazeCorrector> = None;
-    // Milestone 8: the recorder, started/stopped on edges of
-    // `shared.recording` (GUI Record button / tray / `--record`).
+    // The recorder, started/stopped on edges of `shared.recording`
+    // (GUI Record button / tray / `--record`).
     let mut recorder: Option<Recorder> = None;
 
     let mut out_inflight = vec![false; out_q.buffers.len()];
@@ -610,9 +609,9 @@ fn capture_loop(
             return Ok(());
         }
 
-        // Milestone 8: recording toggle. On start failure, clear the flag so
-        // the GUI/tray show "not recording" and log a clear reason; the
-        // filtering pipeline is never affected.
+        // Recording toggle. On start failure, clear the flag so the GUI/tray
+        // show "not recording" and log a clear reason; the filtering pipeline
+        // is never affected.
         let want_rec = shared.recording.load(Ordering::Relaxed);
         if want_rec != recorder.is_some() {
             if want_rec {
@@ -709,8 +708,8 @@ fn capture_loop(
         let elapsed = last.elapsed();
         if elapsed >= Duration::from_secs(2) {
             let fps = frames as f64 / elapsed.as_secs_f64();
-            // Milestone 8: carry the live recording state into the stats the
-            // GUI status line shows.
+            // Carry the live recording state into the stats the GUI status
+            // line shows.
             let record = recorder.as_ref().map(|r| RecordInfo {
                 path: r.path().display().to_string(),
                 frames: r.frames(),

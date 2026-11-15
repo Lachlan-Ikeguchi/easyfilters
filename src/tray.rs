@@ -1,11 +1,12 @@
 //! System tray icon: `tray-item` with the ksni backend — a pure-Rust
+//! System tray icon: `tray-item` with the ksni backend — a pure-Rust
 //! StatusNotifierItem over D-Bus, so no gtk3/libappindicator system libraries
 //! are needed and it works on any SNI host (KDE Plasma, COSMIC, …).
 //! Menu: toggle filtering on/off (persisted to the config), toggle gaze
-//! correction, toggle feed mirroring, show/hide the GUI window (this is what makes "run in the
-//! background" usable: close the window and the tray keeps the app alive),
-//! quit. Failure to register (no StatusNotifierWatcher on the session bus)
-//! is a warning, never fatal.
+//! correction, toggle feed mirroring, toggle recording, show/hide the GUI
+//! window (this is what makes "run in the background" usable: close the
+//! window and the tray keeps the app alive), quit. Failure to register (no
+//! StatusNotifierWatcher on the session bus) is a warning, never fatal.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -79,9 +80,9 @@ pub(crate) fn toggle_mirror(shared: &Shared, config_path: &Path) {
     info!(mirror = on, "toggled feed mirroring");
 }
 
-/// Flip the recording flag (milestone 8). Runtime-only — not persisted to the
-/// config; the pipeline watches the edge in its capture loop. Called by the
-/// tray menu item (and unit-tested directly).
+/// Flip the recording flag. Runtime-only — not persisted to the config; the
+/// pipeline watches the edge in its capture loop. Called by the tray menu
+/// item (and unit-tested directly).
 pub(crate) fn toggle_recording(shared: &Shared) {
     let on = !shared.recording.load(Ordering::Relaxed);
     shared.recording.store(on, Ordering::Relaxed);
@@ -126,7 +127,7 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             warn!(error = %e, "tray: could not add mirror toggle item");
         }
 
-        // Milestone 8: record the filtered feed + default mic to .ogv.
+        // Record the filtered feed + default mic to .ogv.
         let rec_shared = shared.clone();
         if let Err(e) = tray.add_menu_item("Toggle recording", move || {
             toggle_recording(&rec_shared);
@@ -134,7 +135,7 @@ pub fn spawn(shared: Arc<Shared>, config_path: PathBuf) -> thread::JoinHandle<()
             warn!(error = %e, "tray: could not add recording toggle item");
         }
 
-        // Milestone 6: show/hide the GUI window. The GUI watches edges of
+        // Show/hide the GUI window. The GUI watches edges of
         // `show_window` on its tick and closes/reopens the window
         // (`window::close`/`window::open` — a real hide, since winit cannot
         // unmap a Wayland window).

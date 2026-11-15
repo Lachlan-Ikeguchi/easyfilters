@@ -1,11 +1,10 @@
-//! Milestone 8: recording (plan/milestone8.md, option A) — an ffmpeg
-//! subprocess writes the filtered feed (raw BGR24 on stdin) plus the
-//! PulseAudio default input (`-f pulse -i default`) into an .ogv
-//! (Ogg/Theora/Vorbis). No new cargo dependencies; ffmpeg is a runtime
+//! Recording: an ffmpeg subprocess writes the filtered feed (raw BGR24 on
+//! stdin) plus the PulseAudio default input (`-f pulse -i default`) into an
+//! .ogv (Ogg/Theora/Vorbis). No new cargo dependencies; ffmpeg is a runtime
 //! dependency (nix wrapper prefixes PATH with ffmpeg-full; override with
 //! $EASYFILTERS_FFMPEG).
 //!
-//! Sync design (verified experimentally, see plan/milestone8.md findings):
+//! Sync design (verified experimentally):
 //! ffmpeg's rawvideo demuxer stamps frames by *count* at the `-r` framerate
 //! — `-use_wallclock_as_timestamps` is accepted but ignored there — so a
 //! writer thread writes exactly one frame per negotiated interval, repeating

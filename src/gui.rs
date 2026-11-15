@@ -79,7 +79,7 @@ struct App {
     mirror: bool,
     // Close the window to the tray instead of quitting.
     close_to_tray: bool,
-    // Milestone 8: recording toggle (runtime-only, not persisted).
+    // Recording toggle (runtime-only, not persisted).
     recording: bool,
     // Window bookkeeping for hide/show (tray "Show/Hide window").
     window_id: Option<window::Id>,
@@ -107,11 +107,11 @@ enum Message {
     GazeStrengthChanged(f32),
     MirrorToggled(bool),
     CloseToTrayToggled(bool),
-    /// Milestone 8: Record button — flip the shared recording flag; the
-    /// pipeline starts/stops the ffmpeg recorder on the edge.
+    /// Record button — flip the shared recording flag; the pipeline
+    /// starts/stops the ffmpeg recorder on the edge.
     ToggleRecord,
-    /// The window was asked to close (WM close button). Milestone 6:
-    /// hide to tray when `close_to_tray`, else quit.
+    /// The window was asked to close (WM close button): hide to tray when
+    /// `close_to_tray`, else quit.
     CloseRequested(window::Id),
     /// A window was opened (or resized) — carries its id so the
     /// tray-driven show/hide on Tick can address it.
@@ -249,18 +249,13 @@ impl App {
                 if s.close_to_tray != self.close_to_tray {
                     self.close_to_tray = s.close_to_tray;
                 }
-<<<<<<< HEAD
-                // Milestone 8: re-sync the record toggle (tray / --record).
+                // Re-sync the record toggle (tray / --record).
                 let rec = self.shared.recording.load(Ordering::Relaxed);
                 if rec != self.recording {
                     self.recording = rec;
                 }
                 self.stats = self.shared.stats.lock().unwrap().clone();
-                // Milestone 6: tray "Show/Hide window" flips `show_window`;
-=======
-                self.stats = *self.shared.stats.lock().unwrap();
                 // Tray "Show/Hide window" flips `show_window`;
->>>>>>> 940d360 (docs: remove milestone plans, streamline docs and code)
                 // apply it as a hide/show on the edge.
                 let want_visible = self.shared.show_window.load(Ordering::Relaxed);
                 if want_visible != self.window_visible {
@@ -462,20 +457,14 @@ impl App {
                 .into(),
         };
 
-<<<<<<< HEAD
         let st = self.stats.clone();
-        // Milestone 6: show the actually-negotiated stream format (the camera
-        // may not support the requested WxH/fps).
-=======
-        let st = self.stats;
         // Show the actually-negotiated stream format (the camera may not
         // support the requested WxH/fps).
->>>>>>> 940d360 (docs: remove milestone plans, streamline docs and code)
         let negotiated = match st.negotiated {
             Some((w, h, fps)) => format!("  |  negotiated {w}x{h}@{fps:.0}"),
             None => String::new(),
         };
-        // Milestone 8: show the active recording (file + frame/drop counts).
+        // Show the active recording (file + frame/drop counts).
         let record = match &st.record {
             Some(r) => format!(
                 "  |  recording {} ({} frames, {} dropped)",
@@ -515,7 +504,7 @@ impl App {
             toggler(self.close_to_tray)
                 .label("Close window to tray (keep filtering)")
                 .on_toggle(Message::CloseToTrayToggled),
-            // Milestone 8: record the filtered feed + default mic to .ogv.
+            // Record the filtered feed + default mic to .ogv.
             button(if self.recording {
                 "Stop recording"
             } else {

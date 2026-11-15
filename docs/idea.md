@@ -20,9 +20,14 @@ same way. The two apps are designed to sit side by side in the system tray.
   Camera") that shows up in the camera picker of conferencing apps.
 - Real-time **background blur** and **background replace** (static image).
 - A small GUI (iced) with a live preview and controls: on/off, filter mode,
-  blur strength, background image, camera source, output resolution/fps.
+  blur strength, background image, camera source, output resolution/fps,
+  feed mirroring, and a record button.
 - A system tray icon (tray-item) for quick toggling without opening the GUI.
 - Persistent settings in a TOML config file.
+- Feed mirroring: horizontal flip of the whole output, a live persisted
+  toggle (useful when reading text in the preview).
+- Recording: the filtered feed (plus the default microphone) written to .ogv
+  via an ffmpeg subprocess (`src/recorder.rs`).
 
 ## Out of scope (for now)
 
